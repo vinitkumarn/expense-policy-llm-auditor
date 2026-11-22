@@ -1,8 +1,9 @@
 """Command line.
 
 python -m expaudit build [--out DIR]
-python -m expaudit run --line S01 --by naive|rules
-python -m expaudit eval --by naive|rules [--set main|redteam|reworded] [--cases S01,S02] [--limit N]
+python -m expaudit run --line S01 --by naive|rules|fixed [--no-cache]
+python -m expaudit eval --by naive|rules|fixed [--set main|redteam|reworded] [--cases S01,S02]
+                        [--limit N] [--no-cache]
 """
 
 from __future__ import annotations
@@ -12,8 +13,7 @@ import json
 from pathlib import Path
 
 from expaudit import config, db, generator
-from expaudit.baselines import BASELINES, audit
-from expaudit.evaluate import SETS, load_labels, run_eval
+from expaudit.evaluate import AUDITORS, SETS, audit_line, load_labels, run_eval
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,11 +26,13 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run", help="audit one line and print the decision")
     run.add_argument("--line", required=True)
-    run.add_argument("--by", required=True, choices=sorted(BASELINES))
+    run.add_argument("--by", required=True, choices=AUDITORS)
+    run.add_argument("--no-cache", action="store_true", help="force fresh model calls")
     run.add_argument("--data", type=Path, default=config.DATA_DIR, help=argparse.SUPPRESS)
 
     ev = sub.add_parser("eval", help="score an auditor against the plan files")
-    ev.add_argument("--by", required=True, choices=sorted(BASELINES))
+    ev.add_argument("--by", required=True, choices=AUDITORS)
+    ev.add_argument("--no-cache", action="store_true", help="force fresh model calls")
     ev.add_argument("--set", choices=list(SETS), help="default: all three sets")
     ev.add_argument("--cases", help="comma-separated line ids, e.g. S01,X09")
     ev.add_argument("--limit", type=int)
@@ -51,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "run":
             con = db.connect(args.data / db.DB_FILE)
             try:
-                decision = audit(con, args.line, args.by)
+                decision, _ = audit_line(con, args.line, args.by,
+                                         use_cache=not args.no_cache)
             finally:
                 con.close()
             print(json.dumps(decision.to_dict(), indent=2))
@@ -69,10 +72,11 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                 print(f"== {args.by} on {set_name} ==")
                 _, path = run_eval(args.by, set_name, cases=set_cases, limit=args.limit,
-                                   data_dir=args.data, reports_dir=args.reports)
+                                   data_dir=args.data, reports_dir=args.reports,
+                                   use_cache=not args.no_cache)
                 print(f"wrote {path}")
             return 0
-    except (FileNotFoundError, KeyError) as exc:
+    except (FileNotFoundError, KeyError, RuntimeError) as exc:
         print(f"error: {exc}")
         return 2
     return 0

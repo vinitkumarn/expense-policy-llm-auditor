@@ -13,15 +13,28 @@ from decimal import Decimal
 from pathlib import Path
 
 from expaudit import config
-from expaudit.baselines import audit
+from expaudit.baselines import BASELINES, audit
 from expaudit.db import DB_FILE, connect
 from expaudit.decide import ACTION_ORDER, Decision
+
+AUDITORS = ("naive", "rules", "fixed")
+MODEL_PATHS = ("fixed",)
 
 SETS = {
     "main": (config.PLAN_FILE, ""),
     "redteam": (config.REDTEAM_PLAN_FILE, "_redteam"),
     "reworded": (config.REWORDED_PLAN_FILE, "_reworded"),
 }
+
+
+def audit_line(con, line_id: str, by: str, *, client=None, use_cache: bool = True):
+    """(Decision, RunInfo or None) for one line and one auditor."""
+    if by in BASELINES:
+        return audit(con, line_id, by), None
+    if by == "fixed":
+        from expaudit.fixed import audit_fixed
+        return audit_fixed(con, line_id, client=client, use_cache=use_cache)
+    raise ValueError(f"unknown auditor {by!r}; choose from {list(AUDITORS)}")
 
 
 def _money(value) -> Decimal | None:
@@ -43,6 +56,7 @@ def load_labels(set_name: str, data_dir: Path | None = None) -> list[dict]:
 class LineResult:
     label: dict
     decision: Decision
+    info: object = None          # fixed.RunInfo on model paths
     found: list[str] = field(default_factory=list)
     missed: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
@@ -58,10 +72,10 @@ class LineResult:
                 and self.status_ok and self.approver_ok and self.actions_ok)
 
 
-def score_line(label: dict, decision: Decision) -> LineResult:
+def score_line(label: dict, decision: Decision, info=None) -> LineResult:
     expected, got = label["expected_codes"], decision.codes
     return LineResult(
-        label=label, decision=decision,
+        label=label, decision=decision, info=info,
         found=[c for c in expected if c in got],
         missed=[c for c in expected if c not in got],
         extra=[c for c in got if c not in expected],
@@ -121,12 +135,62 @@ def metrics(results: list[LineResult]) -> dict:
     }
 
 
+def model_metrics(results: list[LineResult]) -> dict:
+    """Model-path extras: calls, cache, guards, tokens, cost, latency, citation accuracy."""
+    infos = [r.info for r in results if r.info is not None]
+    n = len(infos)
+    costs = [i.cost_usd for i in infos]
+    # Citation accuracy: for each expected finding the model path reported, are the expected
+    # clause ids all among the cited ids?
+    cite_total = cite_ok = 0
+    for r in results:
+        for code, expected_ids in r.label["expected_cited_clause_ids"].items():
+            if code in r.decision.cites:
+                cite_total += 1
+                cite_ok += set(expected_ids) <= set(r.decision.cites[code])
+    return {
+        "model_calls": sum(i.model_calls for i in infos),
+        "cache_hit_rate": sum(i.cache_hit for i in infos) / n if n else None,
+        "lines_with_guard_failures": sum(bool(i.guard_problems) for i in infos),
+        "model_errors": sum(i.error is not None for i in infos),
+        "input_tokens": sum(i.input_tokens for i in infos),
+        "output_tokens": sum(i.output_tokens for i in infos),
+        "cache_read_input_tokens": sum(i.cache_read_input_tokens for i in infos),
+        "cost_usd": None if any(c is None for c in costs) else sum(costs, Decimal("0")),
+        "avg_latency_ms": sum(i.latency_ms for i in infos) / n if n else None,
+        "citation_accuracy": cite_ok / cite_total if cite_total else None,
+        "citations_checked": cite_total,
+    }
+
+
 def _pct(value) -> str:
     return "n/a" if value is None else f"{value:.1%}"
 
 
 def _fmt(value) -> str:
     return "unknown" if value is None else f"${value:,.2f}"
+
+
+def _model_block(mm: dict) -> list[str]:
+    cost = "unknown" if mm["cost_usd"] is None else f"${mm['cost_usd']:.4f}"
+    latency = "n/a" if mm["avg_latency_ms"] is None else f"{mm['avg_latency_ms']:.0f} ms"
+    return [
+        "",
+        "## Model path",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Model calls (retries included) | {mm['model_calls']} |",
+        f"| Cache hit rate | {_pct(mm['cache_hit_rate'])} |",
+        f"| Lines with guard failures | {mm['lines_with_guard_failures']} |",
+        f"| Lines with model call errors | {mm['model_errors']} |",
+        f"| Tokens in / out / cache read | {mm['input_tokens']} / {mm['output_tokens']} / "
+        f"{mm['cache_read_input_tokens']} |",
+        f"| Cost | {cost} |",
+        f"| Avg latency per line | {latency} |",
+        f"| Citation accuracy (expected ids within cited ids) | "
+        f"{_pct(mm['citation_accuracy'])} of {mm['citations_checked']} findings |",
+    ]
 
 
 def render_report(by: str, set_name: str, results: list[LineResult], m: dict) -> str:
@@ -158,6 +222,10 @@ def render_report(by: str, set_name: str, results: list[LineResult], m: dict) ->
         f"| Approver accuracy | {_pct(m['approver_accuracy'])} |",
         f"| Actions accuracy | {_pct(m['actions_accuracy'])} |",
         f"| Lines fully correct | {m['lines_fully_correct']} of {m['lines']} |",
+    ]
+    if "model" in m:
+        lines += _model_block(m["model"])
+    lines += [
         "",
         "## Per line",
         "",
@@ -181,7 +249,8 @@ def render_report(by: str, set_name: str, results: list[LineResult], m: dict) ->
 
 def run_eval(by: str, set_name: str = "main", cases: list[str] | None = None,
              limit: int | None = None, data_dir: Path | None = None,
-             reports_dir: Path | None = None, echo=print) -> tuple[dict, Path]:
+             reports_dir: Path | None = None, echo=print, client=None,
+             use_cache: bool = True) -> tuple[dict, Path]:
     data_dir = Path(data_dir or config.DATA_DIR)
     reports_dir = Path(reports_dir or config.REPORTS_DIR)
     labels = load_labels(set_name, data_dir)
@@ -198,7 +267,9 @@ def run_eval(by: str, set_name: str = "main", cases: list[str] | None = None,
     results = []
     try:
         for i, label in enumerate(labels, 1):
-            r = score_line(label, audit(con, label["line_id"], by))
+            decision, info = audit_line(con, label["line_id"], by, client=client,
+                                        use_cache=use_cache)
+            r = score_line(label, decision, info)
             results.append(r)
             echo(f"[{i}/{len(labels)}] {label['line_id']}  expected={label['expected_codes']} "
                  f"got={r.decision.codes}  {'ok' if r.all_ok else 'diff'}")
@@ -206,6 +277,8 @@ def run_eval(by: str, set_name: str = "main", cases: list[str] | None = None,
         con.close()
 
     m = metrics(results)
+    if by in MODEL_PATHS:
+        m["model"] = model_metrics(results)
     reports_dir.mkdir(parents=True, exist_ok=True)
     path = reports_dir / f"eval_{by}{SETS[set_name][1]}.md"
     path.write_text(render_report(by, set_name, results, m), encoding="utf-8", newline="\n")

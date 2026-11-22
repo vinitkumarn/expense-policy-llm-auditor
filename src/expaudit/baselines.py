@@ -123,7 +123,9 @@ def rules(con, line: Line) -> tuple[list[Finding], list[str]]:
             if hours <= config.RULES_BUSINESS_CLASS_MIN_HOURS:
                 fare = ECONOMY_FARE_RE.search(memo)
                 findings.append(Finding("AIRFARE_CLASS", CITES["AIRFARE_CLASS"],
-                                        memo_amount=Decimal(fare.group(1)) if fare else None))
+                                        limit_amount=config.RULES_BUSINESS_CLASS_MIN_HOURS,
+                                        memo_amount=Decimal(fare.group(1)) if fare else None,
+                                        flight_hours=hours))
 
     return findings, reasons
 

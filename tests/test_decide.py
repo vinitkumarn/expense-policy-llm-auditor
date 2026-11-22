@@ -66,14 +66,36 @@ def test_personal_item_whole_line_when_no_amount():
     assert d.dollars_out_of_policy == D("120.00") and d.approver == "FINANCE"
 
 
+AIR = lambda hours, fare=None: Finding("AIRFARE_CLASS", ("6.1",), limit_amount=D("6"),
+                                       memo_amount=None if fare is None else D(fare),
+                                       flight_hours=None if hours is None else D(hours))
+
+
 def test_airfare_class_is_amount_minus_economy_fare():
-    d = decide(make_line(category="Airfare", amount=D("1480.00")),
-               [Finding("AIRFARE_CLASS", ("6.1",), memo_amount=D("460"))])
+    d = decide(make_line(category="Airfare", amount=D("1480.00")), [AIR("5.58", "460")])
     assert d.dollars_out_of_policy == D("1020.00") and d.approver == "FINANCE"
+    assert d.status == "OK"
+
+
+def test_airfare_over_threshold_is_dropped_by_python():
+    d = decide(make_line(category="Airfare", amount=D("2980.00")), [AIR("9.33", "900")])
+    assert d.codes == [] and d.status == "OK" and d.approver == "NONE"
+
+
+def test_airfare_exactly_six_hours_is_still_a_finding():
+    d = decide(make_line(category="Airfare", amount=D("1000.00")), [AIR("6", "400")])
+    assert d.codes == ["AIRFARE_CLASS"] and d.dollars_out_of_policy == D("600.00")
+
+
+def test_airfare_flight_hours_unknown_needs_human():
+    d = decide(make_line(category="Airfare", amount=D("1000.00")), [AIR(None, "400")])
+    assert d.codes == ["AIRFARE_CLASS"] and d.status == "NEEDS_HUMAN"
+    no_limit = Finding("AIRFARE_CLASS", ("6.1",), memo_amount=D("400"), flight_hours=D("5"))
+    assert decide(make_line(category="Airfare", amount=D("1000.00")), [no_limit]).status == "NEEDS_HUMAN"
 
 
 def test_airfare_without_economy_fare_needs_human_g05():
-    d = decide(make_line(category="Airfare", amount=D("1210.00")), [Finding("AIRFARE_CLASS", ("6.1",))])
+    d = decide(make_line(category="Airfare", amount=D("1210.00")), [AIR("4.17")])
     assert d.codes == ["AIRFARE_CLASS"]
     assert d.status == "NEEDS_HUMAN" and d.dollars_out_of_policy is None
     assert d.approver is None and d.actions == []

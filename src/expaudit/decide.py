@@ -50,12 +50,15 @@ class Finding:
     limit_amount: per-person / per-night limit (MEAL_OVER_LIMIT, LODGING_OVER_LIMIT).
     memo_amount: the dollar amount quoted from the memo (alcohol, personal item, economy fare).
     attendees_count: from the memo, used when the line field is blank.
+    flight_hours: scheduled flight time from the memo (AIRFARE_CLASS). For AIRFARE_CLASS,
+        limit_amount is the policy's hour threshold (6.1) and Python does the comparison.
     """
     code: str
     cites: tuple[str, ...] = ()
     limit_amount: Decimal | None = None
     memo_amount: Decimal | None = None
     attendees_count: int | None = None
+    flight_hours: Decimal | None = None
 
 
 @dataclass
@@ -156,6 +159,13 @@ def decide(line: Line, findings: list[Finding], needs_human_reasons=()) -> Decis
     reasons = list(needs_human_reasons)
     dollars_by_code: dict[str, Decimal | None] = {}
     for code, f in by_code.items():
+        if code == "AIRFARE_CLASS":
+            # Policy 6.1: business class is allowed only when the flight is OVER the threshold.
+            # Python compares; the model only quotes the threshold and the flight time.
+            if f.flight_hours is None or f.limit_amount is None:
+                reasons.append("flight time or hour threshold unknown for AIRFARE_CLASS")
+            elif f.flight_hours > f.limit_amount:
+                continue   # long enough flight: business class is in policy, not a finding
         value = _dollars(f, line, by_code)
         if value is not None:
             value = _cents(value)
