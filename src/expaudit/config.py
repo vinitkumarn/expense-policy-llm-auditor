@@ -60,3 +60,15 @@ AGENT_MAX_STEPS = 4      # max search_policy tool calls per line
 RETRIEVAL_TOP_K = 3      # clauses returned by one policy search
 MODEL = os.getenv("EXPAUDIT_MODEL") or "claude-sonnet-5-5"
 MAX_TOKENS = 4000
+
+# US dollars per million tokens (Anthropic first-party list prices, Nov 2026). Used only to
+# report cost; a model missing here reports cost as unknown. Cache writes (5-minute) are 1.25x
+# input, cache reads 0.1x input (Sonnet 5.5 cache reads are listed at $0.10).
+PRICES_PER_MTOK = {
+    "claude-sonnet-5-5": {"input": Decimal("2.00"), "output": Decimal("10.00"),
+                          "cache_write": Decimal("2.50"), "cache_read": Decimal("0.10")},
+    "claude-opus-5-5": {"input": Decimal("4.00"), "output": Decimal("20.00"),
+                        "cache_write": Decimal("5.00"), "cache_read": Decimal("0.20")},
+    "claude-haiku-5-5": {"input": Decimal("0.10"), "output": Decimal("0.50"),
+                         "cache_write": Decimal("0.125"), "cache_read": Decimal("0.01")},
+}

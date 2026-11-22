@@ -35,3 +35,53 @@ def make_line(**overrides) -> Line:
     )
     fields.update(overrides)
     return Line(**fields)
+
+
+# --- scripted fake Claude client (no real API is ever called in tests) -----------------------
+import json
+from types import SimpleNamespace
+
+from expaudit import config
+
+
+class FakeClient:
+    """Stands in for anthropic.Anthropic(). Each create() pops the next scripted reply.
+
+    A reply is a str (the model's text), a dict (dumped as JSON) or an Exception (raised).
+    Every call's keyword arguments are kept in .calls for the tests to inspect.
+    """
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls: list[dict] = []
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if not self.replies:
+            raise AssertionError("FakeClient: no scripted reply left")
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        text = reply if isinstance(reply, str) else json.dumps(reply)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1000, output_tokens=200,
+                                  cache_read_input_tokens=0, cache_creation_input_tokens=800),
+        )
+
+
+def answer(*findings, explanation="See the cited clause."):
+    return {"findings": list(findings), "explanation": explanation}
+
+
+def finding(code, cites, quote, **extra):
+    return {"code": code, "cited_clause_ids": list(cites), "policy_quote": quote, **extra}
+
+
+@pytest.fixture()
+def sandbox(tmp_path, monkeypatch):
+    """Logs and the response cache go to a temp folder for each test."""
+    monkeypatch.setattr(config, "LOGS_DIR", tmp_path / "logs")
+    monkeypatch.setattr(config, "CACHE_DIR", tmp_path / "cache")
+    return tmp_path
