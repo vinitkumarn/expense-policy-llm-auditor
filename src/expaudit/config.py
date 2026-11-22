@@ -37,6 +37,24 @@ CURRENCY = "USD"
 RECEIPT_THRESHOLD = Decimal("75")   # policy 3.1: receipt required for a line over $75
 MANAGER_LIMIT = Decimal("250")      # policy 8.1: under $250 -> manager, else Finance
 
+# Rules baseline only ------------------------------------------------------------------------
+# A hardcoded limits table, copied by hand from Appendix B of the policy. It was written BEFORE
+# amendment C-1 (Appendix C, Tier 1 dinner $85 from 2026-10-01) and does not know about it, on
+# purpose: this is what a hand-maintained rules table looks like when the policy moves on. The
+# model paths read the policy text instead. Never used by decide.py or the model paths.
+RULES_TIER1_CITIES = frozenset({"San Francisco", "New York", "London", "Boston", "Seattle"})
+RULES_LIMITS = {
+    ("dinner", 1): Decimal("100"),
+    ("dinner", 2): Decimal("70"),
+    ("other_meal", 1): Decimal("40"),
+    ("other_meal", 2): Decimal("40"),
+    ("lodging", 1): Decimal("300"),
+    ("lodging", 2): Decimal("200"),
+    ("client", 1): Decimal("150"),     # policy 4.3, per person, alcohol included
+    ("client", 2): Decimal("150"),
+}
+RULES_BUSINESS_CLASS_MIN_HOURS = Decimal("6")   # policy 6.1: business only when over 6 hours
+
 # Model paths --------------------------------------------------------------------------------
 AGENT_MAX_STEPS = 4      # max search_policy tool calls per line
 RETRIEVAL_TOP_K = 3      # clauses returned by one policy search

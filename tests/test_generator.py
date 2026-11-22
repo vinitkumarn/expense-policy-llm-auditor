@@ -111,6 +111,14 @@ def test_unknown_dollars_only_on_needs_human(built):
             assert label["approver"] is None and label["actions"] == []
 
 
+def test_needs_human_dollars_are_null_never_zero(built):
+    for label in _all_labels(built):
+        if label["status"] == "NEEDS_HUMAN":
+            assert label["dollars_out_of_policy"] is None, label["line_id"]
+    for lid in ["G01", "G02", "G03", "G05"]:
+        assert built["main"][lid]["dollars_out_of_policy"] is None
+
+
 def test_cited_clauses_exist_in_policy(built):
     clauses = clauses_by_id()
     for label in _all_labels(built):

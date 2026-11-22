@@ -424,7 +424,9 @@ def _label(c: dict) -> dict:
         "expected_cited_clause_ids": {f["code"]: f["cites"] for f in findings},
         "difference_types": {f["code"]: DIFFERENCE_TYPE[f["code"]] for f in findings},
         "dollars_by_code": {f["code"]: f["out"] for f in findings},
-        "dollars_out_of_policy": _sum([f["out"] for f in findings]),
+        # Unknown dollars are null, never 0.00: a NEEDS_HUMAN line cannot be priced by Python.
+        "dollars_out_of_policy": (None if c["status"] == "NEEDS_HUMAN"
+                                  else _sum([f["out"] for f in findings])),
         "dollars_held": _sum([f["held"] for f in findings]),
         "approver": c["approver"],
         "actions": c["actions"],
