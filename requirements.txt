@@ -1,0 +1,5 @@
+duckdb
+pydantic>=2
+anthropic
+python-dotenv
+pytest

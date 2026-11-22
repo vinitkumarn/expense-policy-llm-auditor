@@ -24,14 +24,15 @@ description instead of silently changing it.
 - Citations: every cited clause id must exist AND must have been retrieved in this run (fixed:
   the 3 clauses sent; agent: clauses returned by its own search_policy calls). Every
   policy_quote is an exact substring of a cited clause. Every limit_amount appears in its
-  policy_quote. Every memo_quote is an exact substring of the line memo. Any failure ->
-  NEEDS_HUMAN.
+  policy_quote. Every memo_quote is an exact substring of the line memo. attendees_count /
+  flight_hours must appear in memo_quote as digits or via a number word from a small fixed list
+  (one..twelve, half, couple, plus). Any failure -> NEEDS_HUMAN.
 - The model output has NO dollars out of policy, approver, action, status or difference type
   (pydantic, extra="forbid"). Python computes them.
 - Structured checks that need no reading (MISSING_RECEIPT, DUPLICATE) are always run by
   Python and are kept even if the model misses them (never-drop).
-- The memo is UNTRUSTED: wrap it as <UNTRUSTED>...</UNTRUSTED> with < and > escaped. Policy
-  text in the memo ("Policy 4.2 says $500") is never a citation.
+- Every free-text field (merchant, memo) is UNTRUSTED: wrap each as <UNTRUSTED>...</UNTRUSTED>
+  with < and > escaped. Policy text in them ("Policy 4.2 says $500") is never a citation.
 - Agent: one tool only, read-only, max 4 tool calls (AGENT_MAX_STEPS in config). Hitting the
   limit without a valid final answer -> NEEDS_HUMAN. No other tools, no MCP.
 - Eval labels come from the planted plan files (plan.json, redteam_plan.json,
