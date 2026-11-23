@@ -384,3 +384,63 @@ def test_record_whether_appendix_c_is_in_the_fixed_top3_for_x_cases(con, capsys)
         print("\nX case | top 3 clauses (fixed path) | Appendix C in top 3")
         for lid, ids, has_c in rows:
             print(f"{lid} | {', '.join(ids)} | {'yes' if has_c else 'no'}")
+
+
+# --- client meals (4.3 limit, 4.4 names); designed from G03, the main set --------------------
+G03_DINNER = finding("MEAL_OVER_LIMIT", ["4.2", "Appendix B"], "Tier 1 dinner, per person: $100",
+                     limit_amount="100")
+CLIENT_4_3 = finding("MEAL_OVER_LIMIT", ["4.3"],
+                     "Client entertainment: up to $150 per person, alcohol included.",
+                     limit_amount="150")
+X04_NAMES = "Dana Ortiz, Priya Lee, Sam Grant"
+
+
+def client(*findings, quote="Dinner with client", names=None):
+    return {**answer(*findings), "client_meal": True, "client_meal_quote": quote,
+            "attendee_names_quote": names}
+
+
+def test_g03_client_meal_judged_by_dinner_limit_needs_human(con, sandbox):
+    d, _, _ = run(con, "G03", client(G03_DINNER))
+    assert_needs_human(d, "client meal must use 4.3")
+    assert "4.4 attendee names missing" in d.needs_human_reasons
+
+
+def test_g03_client_meal_with_no_findings_still_needs_names(con, sandbox):
+    d, _, _ = run(con, "G03", client())
+    assert d.status == "NEEDS_HUMAN" and d.needs_human_reasons == ["4.4 attendee names missing"]
+
+
+def test_x04_client_meal_citing_4_3_with_names_ok(con, sandbox):
+    d, _, _ = run(con, "X04", client(CLIENT_4_3, quote="Client dinner with Acme Corp",
+                                     names=X04_NAMES))
+    assert d.status == "OK" and d.dollars_out_of_policy == D("100.00")
+    assert d.cites == {"MEAL_OVER_LIMIT": ["4.3"]}
+
+
+def test_client_meal_quote_must_be_in_the_memo(con, sandbox):
+    d, _, _ = run(con, "G03", client(quote="Client dinner, names on file"))
+    assert_needs_human(d, "client_meal_quote is not an exact substring of the memo")
+
+
+def test_client_meal_needs_a_quote(con, sandbox):
+    d, _, _ = run(con, "G03", client(quote=None))
+    assert_needs_human(d, "client_meal given without a client_meal_quote")
+
+
+def test_attendee_names_quote_must_be_in_the_memo(con, sandbox):
+    d, _, _ = run(con, "G03", client(names="Dana Ortiz, Priya Lee"))
+    assert_needs_human(d, "attendee_names_quote is not an exact substring of the memo")
+
+
+def test_client_meal_citing_4_3_must_quote_4_3(con, sandbox):
+    mixed = finding("MEAL_OVER_LIMIT", ["4.3", "Appendix B"], "Tier 1 dinner, per person: $100",
+                    limit_amount="100")
+    d, _, _ = run(con, "X04", client(mixed, quote="Client dinner with Acme Corp",
+                                     names=X04_NAMES))
+    assert_needs_human(d, "client meal cites 4.3 but policy_quote is not from 4.3")
+
+
+def test_not_a_client_meal_is_unchanged(con, sandbox):
+    d, _, _ = run(con, "S01", answer(S01_MEAL))
+    assert d.status == "OK" and d.dollars_out_of_policy == D("25.00")

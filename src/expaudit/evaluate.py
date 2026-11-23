@@ -148,11 +148,17 @@ def model_metrics(results: list[LineResult]) -> dict:
     # Citation accuracy: for each expected finding the model path reported, are the expected
     # clause ids all among the cited ids?
     cite_total = cite_ok = 0
+    misses = []
     for r in results:
         for code, expected_ids in r.label["expected_cited_clause_ids"].items():
             if code in r.decision.cites:
                 cite_total += 1
-                cite_ok += set(expected_ids) <= set(r.decision.cites[code])
+                cited = r.decision.cites[code]
+                if set(expected_ids) <= set(cited):
+                    cite_ok += 1
+                else:
+                    misses.append({"line_id": r.label["line_id"], "code": code,
+                                   "expected": list(expected_ids), "cited": list(cited)})
     return {
         "model_calls": sum(i.model_calls for i in infos),
         "cache_hit_rate": sum(i.cache_hit for i in infos) / n if n else None,
@@ -172,6 +178,7 @@ def model_metrics(results: list[LineResult]) -> dict:
         "step_limit_hits": sum(i.step_limit_hit for i in infos),
         "citation_accuracy": cite_ok / cite_total if cite_total else None,
         "citations_checked": cite_total,
+        "citation_misses": misses,
     }
 
 
@@ -212,6 +219,15 @@ def _model_block(mm: dict) -> list[str]:
         f"| Step-limit hits (limit {config.AGENT_MAX_STEPS} searches) | {mm['step_limit_hits']} |",
         f"| Citation accuracy (expected ids within cited ids) | "
         f"{_pct(mm['citation_accuracy'])} of {mm['citations_checked']} findings |",
+        "",
+        "## Citation misses",
+        "",
+        "Findings the path reported whose cited ids do not include every expected id.",
+        "",
+        *(["| Line | Code | Expected ids | Cited ids |", "|---|---|---|---|"]
+          + [f"| {m['line_id']} | {m['code']} | {', '.join(m['expected'])} "
+             f"| {', '.join(m['cited'])} |" for m in mm["citation_misses"]]
+          if mm["citation_misses"] else ["None."]),
     ]
 
 

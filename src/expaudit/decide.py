@@ -39,6 +39,8 @@ REQUEST_RECEIPT = "REQUEST_RECEIPT_AFTER_PAYMENT"
 RECLASS = "RECLASS"
 ACTION_ORDER = [REJECT, RECOVER, HOLD, REQUEST_RECEIPT, RECLASS]
 
+CLIENT_CLAUSE = "4.3"   # client entertainment limit (policy 4.3; names required by 4.4)
+
 OK, NEEDS_HUMAN = "OK", "NEEDS_HUMAN"
 MANAGER, FINANCE, NO_APPROVER = "MANAGER", "FINANCE", "NONE"
 
@@ -148,8 +150,14 @@ def _approver(codes: list[str], out: Decimal, grade: str) -> str:
     return MANAGER
 
 
-def decide(line: Line, findings: list[Finding], needs_human_reasons=()) -> Decision:
-    """Turn verified findings into the line decision."""
+def decide(line: Line, findings: list[Finding], needs_human_reasons=(),
+           client_meal: bool = False, attendee_names_quoted: bool = False) -> Decision:
+    """Turn verified findings into the line decision.
+
+    client_meal / attendee_names_quoted: the line is a client meal (quote verified by the
+    guards) and the memo lists attendee names (quote verified). Policy 4.3 sets the client
+    limit, 4.4 requires the names; either gap -> NEEDS_HUMAN.
+    """
     by_code: dict[str, Finding] = {}
     for f in findings:
         if f.code not in DIFFERENCE_TYPE:
@@ -157,6 +165,12 @@ def decide(line: Line, findings: list[Finding], needs_human_reasons=()) -> Decis
         by_code.setdefault(f.code, f)   # one finding per code; the first one wins
 
     reasons = list(needs_human_reasons)
+    if client_meal:
+        meal = by_code.get("MEAL_OVER_LIMIT")
+        if meal is not None and CLIENT_CLAUSE not in meal.cites:
+            reasons.append(f"client meal must use {CLIENT_CLAUSE}")
+        if not attendee_names_quoted:
+            reasons.append("4.4 attendee names missing")
     dollars_by_code: dict[str, Decimal | None] = {}
     for code, f in by_code.items():
         if code == "AIRFARE_CLASS":

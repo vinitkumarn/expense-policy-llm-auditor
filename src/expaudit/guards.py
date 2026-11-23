@@ -2,7 +2,7 @@
 
 Two kinds, split by what they protect:
 - Decision guards (cited ids, policy_quote, limit_amount, memo_quote, memo_amount, attendees,
-  flight_hours). Any problem -> the caller drops ALL model findings and sends the line to
+  flight_hours, client_meal_quote, attendee_names_quote). Any problem -> the caller drops ALL model findings and sends the line to
   NEEDS_HUMAN (Python checks are kept).
 - The explanation-number check. The explanation is display text only, so a failure does not
   change the decision: the explanation is replaced with HIDDEN_EXPLANATION, logged and counted.
@@ -26,7 +26,9 @@ _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _WORD = re.compile(r"[a-z]+")
 _SPACES = re.compile(r"\s+")
 
-HIDDEN_EXPLANATION = "Explanation hidden: it contained a number that could not be verified."
+CLIENT_CLAUSE = "4.3"   # client entertainment (limit per person); decide.py uses the same id
+
+HIDDEN_EXPLANATION ="Explanation hidden: it contained a number that could not be verified."
 
 
 def numbers_in(text: str) -> set[Decimal]:
@@ -68,6 +70,16 @@ def _check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
     problems: list[str] = []
     verified_quote_numbers: set[Decimal] = set()
 
+    # Client meal (answer level). Python decides 4.3 / 4.4 from these in decide.py.
+    if answer.client_meal:
+        if answer.client_meal_quote is None:
+            problems.append("client_meal given without a client_meal_quote")
+        elif not _memo_quote_ok(answer.client_meal_quote, line.memo):
+            problems.append("client_meal_quote is not an exact substring of the memo")
+    if (answer.attendee_names_quote is not None
+            and not _memo_quote_ok(answer.attendee_names_quote, line.memo)):
+        problems.append("attendee_names_quote is not an exact substring of the memo")
+
     for n, f in enumerate(answer.findings, 1):
         tag = f"finding {n} ({f.code})"
         cited = [retrieved[cid] for cid in f.cited_clause_ids if cid in retrieved]
@@ -82,6 +94,12 @@ def _check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
             problems.append(f"{tag}: policy_quote is not an exact substring of a cited clause")
         if f.limit_amount is not None and f.limit_amount not in numbers_in(f.policy_quote):
             problems.append(f"{tag}: limit_amount {f.limit_amount} does not appear in policy_quote")
+        # A client meal that cites 4.3 must take its limit from 4.3, not from another cited clause.
+        if (answer.client_meal and f.code == "MEAL_OVER_LIMIT" and CLIENT_CLAUSE in retrieved
+                and CLIENT_CLAUSE in f.cited_clause_ids
+                and quote not in _squash(retrieved[CLIENT_CLAUSE]["text"])):
+            problems.append(f"{tag}: client meal cites {CLIENT_CLAUSE} but policy_quote is not "
+                            f"from {CLIENT_CLAUSE}")
 
         # attendees_count equal to the line's own field is already trusted.
         attendees_from_line = (f.attendees_count is not None

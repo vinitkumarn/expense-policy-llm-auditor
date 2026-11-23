@@ -48,10 +48,13 @@ Finding codes you may use (Python adds missing-receipt and duplicate checks itse
 - AIRFARE_CLASS: business class. Give limit_amount = the hour threshold quoted from the airfare
   clause and flight_hours from the memo; Python decides whether the flight is long enough.
 
+If the memo shows a client meal, report client_meal with the quote.
+
 Answer with ONE JSON object and nothing else:
 {"findings": [{"code": "...", "cited_clause_ids": ["..."], "policy_quote": "...",
   "limit_amount": null, "memo_quote": null, "memo_amount": null, "attendees_count": null,
-  "flight_hours": null}], "explanation": "..."}
+  "flight_hours": null}], "explanation": "...", "client_meal": null,
+  "client_meal_quote": null, "attendee_names_quote": null}
 
 Rules:
 - cited_clause_ids: ids of the clauses you relied on, exactly as shown in [brackets].
@@ -61,6 +64,8 @@ Rules:
 - memo_quote: copied exactly from the memo. memo_amount (alcohol, personal item, economy fare),
   attendees_count (only when the line field is blank) and flight_hours must be backed by it.
 - If an amount, attendee count or flight time is not stated, leave it null; do not guess.
+- client_meal: true for a client meal, with client_meal_quote copied exactly from the memo.
+  attendee_names_quote: the attendee names copied exactly from the memo; null if none are given.
 - Do NOT output dollars out of policy, approver, action, status or difference type. Python
   computes them. Do not do arithmetic.
 - explanation: one or two plain sentences. Use only numbers that appear in the line fields, the

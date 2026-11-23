@@ -116,7 +116,14 @@ Catching it before payment is cheaper than recovering it after.
    line's own attendees field needs no memo quote (the field is already trusted).
 6. The answer matches the schema (one retry with the full validation error). The schema has no
    field for dollars, approver, action, status or difference type (`extra="forbid"`).
-7. Agent only: at most 4 searches. After the 4th the model is told to answer and the next call
+7. Client meals (policy 4.3 / 4.4). The model reports `client_meal` with a `client_meal_quote`
+   and the attendee names as `attendee_names_quote`; both quotes must be exact substrings of
+   the memo. Python then decides: a client meal whose MEAL_OVER_LIMIT finding does not cite 4.3
+   -> NEEDS_HUMAN ("client meal must use 4.3"); a 4.3 finding must quote 4.3 itself; a client
+   meal with no names quoted -> NEEDS_HUMAN ("4.4 attendee names missing"), even with no
+   findings. These fields sit on the whole answer, not on a finding, so the names check runs
+   even when the meal is under the 4.3 limit.
+8. Agent only: at most 4 searches. After the 4th the model is told to answer and the next call
    is made with tools switched off (`tool_choice: none`). Asking for a 5th search, or for any
    tool other than `search_policy`, stops the run.
 
@@ -260,7 +267,7 @@ scripted fake client.
 - The red-team and reworded sets are small (8 lines each). Treat their numbers as a smoke test.
 - Cost uses list prices from `config.py`; a model missing from that table shows cost as unknown.
 - On a real run (X01) the agent tried to give its final answer through a tool named `json` and
-  the line went to NEEDS_HUMAN; the prompt (agent-v2) now says to answer as plain JSON text, and
+  the line went to NEEDS_HUMAN; the prompt (agent-v2 and later) now says to answer as plain JSON text, and
   the first unknown tool gets an error reply instead of ending the run (a second one still does).
 - Two guard fixes came from the first real run, and both are general rules, not tuning for a
   case: (1) an explanation number that cannot be verified now hides the explanation instead of
@@ -268,8 +275,21 @@ scripted fake client.
   numbers in display text: the model's own per-person math, the fake clause "9.9" it was
   rejecting, memo amounts); (2) `attendees_count` equal to the line's attendees field passes
   without a memo quote (R05). Every decision guard is unchanged.
-- W05 is a known miss and was not tuned: the agent used the Tier 2 dinner limit instead of 4.3
-  client entertainment. Prompts were not changed for it.
+- Client-meal fix (prompt versions fixed-v3 / agent-v3). On a real run the agent judged client
+  meals by the normal dinner limit. The fix was designed from G03 (main set: "Dinner with
+  client.", no names; the agent said MEAL_OVER_LIMIT $195, OK; the label is NEEDS_HUMAN under 4.4).
+  W05 (reworded, held out) was missed before this fix ($400 instead of $80: Tier 2 dinner limit
+  instead of 4.3 at $150 per person). W05 was not used to design the fix, only re-run to check it.
+  The rule is in Python (decide.py) and the same for both paths; the only prompt change is one
+  shared sentence asking the model to report a client meal with the quote.
+
+  | Line | Before (real run, agent) | After (fixed / agent) |
+  |---|---|---|
+  | G03 (main) | MEAL_OVER_LIMIT $195, OK (label NEEDS_HUMAN) | fill in after local run |
+  | W05 (reworded, held out) | MEAL_OVER_LIMIT $400 (label $80) | fill in after local run |
+
+  The "after" column needs a real API key, so it was not run here. The fake-client tests show
+  how Python decides each case. naive and rules numbers are unchanged by this fix.
 
 ## Layout
 

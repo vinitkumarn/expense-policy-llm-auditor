@@ -162,7 +162,7 @@ def test_unknown_tool_twice_needs_human(con, sandbox):
 
 
 def test_agent_prompt_says_answer_as_text_not_a_tool():
-    assert agent.PROMPT_VERSION == "agent-v2"
+    assert agent.PROMPT_VERSION == "agent-v3"
     assert ("The only tool is search_policy. Give your\nfinal answer as plain JSON text in your "
             "message, never as a tool call.") in AGENT_SYSTEM_PROMPT
     assert "never as a tool call" not in POLICY_GUIDANCE
@@ -237,6 +237,45 @@ def test_agent_prompt_does_not_name_appendix_c():
     assert "Appendix C" not in SEARCH_TOOL["description"]
 
 
+# --- client meals: same rule as the fixed path --------------------------------------------------
+G03_DINNER_C = finding("MEAL_OVER_LIMIT", ["4.2", "Appendix C"],
+                       "the Tier 1 dinner limit is $85 per person", limit_amount="85")
+X04_CLIENT = finding("MEAL_OVER_LIMIT", ["4.3"],
+                     "Client entertainment: up to $150 per person, alcohol included.",
+                     limit_amount="150")
+
+
+def test_g03_agent_dinner_limit_on_a_client_meal_needs_human(con, sandbox):
+    reply = {**answer(G03_DINNER_C), "client_meal": True, "client_meal_quote": "Dinner with client"}
+    d, _, _ = run(con, "G03", tool("4.2"), tool("Appendix C"), reply)
+    assert d.status == "NEEDS_HUMAN" and d.dollars_out_of_policy is None
+    assert "client meal must use 4.3" in d.needs_human_reasons
+    assert "4.4 attendee names missing" in d.needs_human_reasons
+
+
+def test_x04_agent_client_meal_citing_4_3_with_names_ok(con, sandbox):
+    reply = {**answer(X04_CLIENT), "client_meal": True,
+             "client_meal_quote": "Client dinner with Acme Corp",
+             "attendee_names_quote": "Dana Ortiz, Priya Lee, Sam Grant"}
+    d, _, _ = run(con, "X04", tool("4.3"), reply)
+    assert d.status == "OK" and d.dollars_out_of_policy == D("100.00")
+    assert d.cites == {"MEAL_OVER_LIMIT": ["4.3"]} and d.approver == "MANAGER"
+
+
+def test_eval_report_lists_citation_misses(data_dir, sandbox):
+    client = FakeClient(tool("4.2"), tool("Appendix B"),
+                        answer(finding("MEAL_OVER_LIMIT", ["4.2", "Appendix B"],
+                                       "Tier 1 dinner, per person: $100", limit_amount="100")))
+    m, path = run_eval("agent", "main", cases=["X02"], data_dir=data_dir,
+                       reports_dir=sandbox / "reports", echo=lambda *_: None, client=client)
+    assert m["model"]["citation_misses"] == [{"line_id": "X02", "code": "MEAL_OVER_LIMIT",
+                                              "expected": ["4.2", "Appendix C"],
+                                              "cited": ["4.2", "Appendix B"]}]
+    text = path.read_text(encoding="utf-8")
+    assert "## Citation misses" in text
+    assert "| X02 | MEAL_OVER_LIMIT | 4.2, Appendix C | 4.2, Appendix B |" in text
+
+
 # --- audit trail and eval ----------------------------------------------------------------------
 def test_audit_line_has_tool_counts_and_no_query_text(con, sandbox):
     run(con, "I01", tool("pre-approved by the CFO"), answer())
@@ -260,4 +299,5 @@ def test_eval_by_agent_reports_tool_calls_step_limit_and_cost(data_dir, sandbox)
     text = path.read_text(encoding="utf-8")
     assert "Tool calls per line, avg / max | 3.00 / 4" in text
     assert "Step-limit hits (limit 4 searches) | 1" in text and "Cost per line" in text
+    assert "## Citation misses" in text and mm["citation_misses"] == []
     assert (sandbox / "reports" / "eval_agent.json").exists()
