@@ -9,6 +9,9 @@ It **suggests**; a person decides. It never approves, rejects, pays or recovers 
 Synthetic data only, USD only, everything local (DuckDB). The design is in
 [docs/design.md](docs/design.md).
 
+**Status:** PRs 1-4 and the fix PRs (5-9) are merged. Real fixed and agent runs are done
+(claude-sonnet-5-5); the results are below.
+
 ## What it does, in one example
 
 Line X01: a San Francisco dinner on 2026-10-05, $95, one person. The policy says dinner limits
@@ -168,36 +171,57 @@ sets are reported separately and are never used to tune prompts or rules.
 
 ## Results
 
-Main set (46 lines). naive and rules were run in this repo; fixed and agent need a real API key.
+naive and rules were run in this repo. fixed and agent were run by the author on a laptop with
+`claude-sonnet-5-5`. The agent column is 3 fresh runs (`--no-cache`) after the final prompt,
+shown as a range. "not recorded" means that number was not written down from the real runs.
 
-| Metric | naive | rules | fixed | agent |
+Main set (46 lines, 34 planted findings, $2,681.60 planted):
+
+| Metric | naive | rules | fixed | agent (3 runs) |
 |---|---|---|---|---|
-| Finding recall | 17.6% (6/34) | 91.2% (31/34) | fill in after local run | fill in after local run |
-| False findings on clean lines | 0 of 12 | 0 of 12 | fill in after local run | fill in after local run |
-| Dollars out of policy exact match | 39.1% | 82.6% | fill in after local run | fill in after local run |
-| Dollars caught vs planted | $234.60 of $2,681.60 | $2,576.60 of $2,681.60 | fill in after local run | fill in after local run |
-| Unknown-dollar lines, expected / predicted | 4 / 0 | 4 / 2 | fill in after local run | fill in after local run |
-| Status accuracy | 91.3% | 95.7% | fill in after local run | fill in after local run |
-| Approver accuracy | 39.1% | 89.1% | fill in after local run | fill in after local run |
-| Actions accuracy | 45.7% | 91.3% | fill in after local run | fill in after local run |
-| Citation accuracy | - | - | fill in after local run | fill in after local run |
-| Cost per line | - | - | fill in after local run | fill in after local run |
-| Avg tool calls per line | - | - | 0 | fill in after local run |
-| X cases fully correct | 2/9 | 5/9 | fill in after local run | fill in after local run |
-| Post-amendment Tier 1 dinners fully correct (X01, X02, X08, X09, I01, I02) | 0/6 | 0/6 | fill in after local run | fill in after local run |
+| Finding recall | 17.6% (6/34) | 91.2% (31/34) | 61.8% (21/34) | 34/34 in 2 runs, 33/34 in 1 |
+| False findings on clean lines | 0 of 12 | 0 of 12 | not recorded | not recorded |
+| Dollars out of policy exact match | 39.1% | 82.6% | not recorded | not recorded |
+| Dollars caught vs planted | $234.60 of $2,681.60 | $2,576.60 of $2,681.60 | $1,174.60 of $2,681.60 | $2,681.60 in 2 runs; $1,661.60 in 1 (S07 sent to a person) |
+| Unknown-dollar lines, expected / predicted | 4 / 0 | 4 / 2 | not recorded | not recorded |
+| Status accuracy | 91.3% | 95.7% | 87.0% | 95.7-100% |
+| Approver accuracy | 39.1% | 89.1% | 65.2% | not recorded |
+| Actions accuracy | 45.7% | 91.3% | 71.7% | not recorded |
+| Citation accuracy | - | - | 85.7% | 100% |
+| Cost per line | - | - | $0.0055 | about $0.010 |
+| Avg tool calls (searches) per line | - | - | 0 | about 3 |
+| Step-limit hits | - | - | - | 0 |
+| X cases fully correct | 2/9 | 5/9 | 4/9 | 9/9 |
+| Post-amendment Tier 1 dinners fully correct (X01, X02, X08, X09, I01, I02) | 0/6 | 0/6 | 1/6 | 6/6 |
 
 Red-team (8) and reworded (8), reported separately:
 
 | Metric | naive | rules | fixed | agent |
 |---|---|---|---|---|
-| Red-team finding recall | 12.5% (1/8) | 75.0% (6/8) | fill in after local run | fill in after local run |
-| Red-team dollars exact match | 12.5% | 62.5% | fill in after local run | fill in after local run |
-| Reworded finding recall | 0.0% (0/6) | 0.0% (0/6) | fill in after local run | fill in after local run |
-| Reworded dollars exact match | 25.0% | 25.0% | fill in after local run | fill in after local run |
+| Red-team finding recall | 1/8 | 6/8 | 5/8 | 8/8 |
+| Red-team dollars caught (of $275) | $0 | $193 | $188 | $275 |
+| Red-team citation accuracy | - | - | not recorded | 100% |
+| Reworded finding recall | 0/6 | 0/6 | 1/6 | 6/6 |
+| Reworded dollars caught (of $1,136) | $0 | $0 | $880 | $1,136 |
+| Reworded false findings on clean lines | 0 | 0 | 0 | 0 |
 
 The rules baseline looks strong on the main set because its keyword lists and regexes were
 written for those phrasings. It scores 0 of 6 on the reworded set, and 0 of 6 on the
 post-amendment dinners because its limits table predates amendment C-1.
+
+## What the numbers show
+
+- Fixed retrieval only sees what the first search matches. Appendix C was in its top 3 for 1
+  of the 6 post-amendment dinners, and clauses 4.5 and 7.1 were usually missing, so alcohol and
+  personal items went unreported. The agent followed "amendments in Appendix C apply" and
+  searched for the clause it needed.
+- The agent costs about 1.8x fixed per line (about one cent) and found every planted dollar in
+  2 of 3 runs. In the other run a guard sent one line (S07) to a person instead of passing an
+  unsupported number.
+- Hardcoded rules were strong on familiar wording, but stale after the policy amendment and
+  blind to reworded memos.
+- Across runs, every agent miss was the safe kind: a line sent to a person. The agent never
+  decided a grey line without a person and never produced a wrong dollar amount.
 
 ## Data
 
@@ -259,48 +283,21 @@ scripted fake client.
 
 ## Honest notes
 
-- Everything is synthetic: the company, the people, the policy and the expense lines.
-- The labels were planted by the author of the tool. Scores show whether the tool finds what
-  was planted, not how it does on real expense data.
-- The rules baseline was written before amendment C-1, on purpose, to show what a hand-kept
-  rules table does when the policy changes.
-- The red-team and reworded sets are small (8 lines each). Treat their numbers as a smoke test.
+- Synthetic data; labels planted by the author; the rules baseline was written before amendment C-1, on purpose.
+- Scores show whether the tool finds what was planted, not how it does on real expense data.
+- The red-team and reworded sets are small (8 lines each); treat their numbers as a smoke test.
 - Cost uses list prices from `config.py`; a model missing from that table shows cost as unknown.
-- On a real run (X01) the agent tried to give its final answer through a tool named `json` and
-  the line went to NEEDS_HUMAN; the prompt (agent-v2 and later) now says to answer as plain JSON text, and
-  the first unknown tool gets an error reply instead of ending the run (a second one still does).
-- Two guard fixes came from the first real run, and both are general rules, not tuning for a
-  case: (1) an explanation number that cannot be verified now hides the explanation instead of
-  sending the line to NEEDS_HUMAN (C05, a main-set case, plus R01, R05, W01-W03 failed only on
-  numbers in display text: the model's own per-person math, the fake clause "9.9" it was
-  rejecting, memo amounts); (2) `attendees_count` equal to the line's attendees field passes
-  without a memo quote (R05). Every decision guard is unchanged.
-- Client-meal fix (prompt versions fixed-v3 / agent-v3). On a real run the agent judged client
-  meals by the normal dinner limit. The fix was designed from G03 (main set: "Dinner with
-  client.", no names; the agent said MEAL_OVER_LIMIT $195, OK; the label is NEEDS_HUMAN under 4.4).
-  W05 (reworded, held out) was missed before this fix ($400 instead of $80: Tier 2 dinner limit
-  instead of 4.3 at $150 per person). W05 was not used to design the fix, only re-run to check it.
-  The rule is in Python (decide.py) and the same for both paths; the only prompt change is one
-  shared sentence asking the model to report a client meal with the quote.
 
-  | Line | Before (real run, agent) | After (fixed / agent) |
-  |---|---|---|
-  | G03 (main) | MEAL_OVER_LIMIT $195, OK (label NEEDS_HUMAN) | fill in after local run |
-  | W05 (reworded, held out) | MEAL_OVER_LIMIT $400 (label $80) | fill in after local run |
+Findings from the real runs and the fixes, in order:
 
-  The "after" column needs a real API key, so it was not run here. The fake-client tests show
-  how Python decides each case. naive and rules numbers are unchanged by this fix.
-- Run-to-run variance (S07, main set): in one real run a guard caught an economy-fare amount
-  that the model's memo quote did not support and sent the line to a person; a fresh call on
-  the same line was correct. The guard did its job (no unsupported dollars were used), but the
-  same line can land differently from run to run.
-- G02 (main set: "Group dinner with the implementation team.", attendees field blank) came back
-  OK with $0 in one real run and NEEDS_HUMAN in another. Policy 4.4 is clear, so this moved from
-  the model to a Python rule in decide.py: on the model paths, a Meals line with the attendees
-  field blank needs a finding with a verified attendees_count (for example W05's "me plus
-  three"), otherwise NEEDS_HUMAN, "attendee count missing (4.4)", dollars unknown. A line the
-  model flags as MISCATEGORIZED (A01, a hotel coded as Meals) is not held. No prompt change;
-  naive and rules numbers are unchanged.
+1. The agent tried to answer through a tool named `json`. Unknown tools never run; the first one now gets one corrective error reply (a second ends the run).
+2. The explanation-number check was too strict. An unverified number now hides the explanation instead of blocking the decision.
+3. `attendees_count` equal to the line's own attendees field now passes without a memo quote.
+4. Client meals were judged by the dinner limit. Fixed in Python (4.3 limit, 4.4 names) using G03 from the main set; W05 in the held-out reworded set was only re-run to check, and passed.
+5. Limit findings cited only the appendix. The shared prompt now asks for the rule clause plus the clause with the number; citation accuracy is now 100%.
+6. G02's attendee count varied across runs, so it moved from the model to a Python rule (blank attendees on a meal -> NEEDS_HUMAN unless a verified count is quoted).
+
+- Run-to-run variance is real (S07 and G02 landed differently between runs), so agent results are reported as a range over 3 runs.
 
 ## Layout
 
