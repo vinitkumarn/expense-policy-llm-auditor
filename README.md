@@ -253,6 +253,9 @@ scripted fake client.
   rules table does when the policy changes.
 - The red-team and reworded sets are small (8 lines each). Treat their numbers as a smoke test.
 - Cost uses list prices from `config.py`; a model missing from that table shows cost as unknown.
+- On a real run (X01) the agent tried to give its final answer through a tool named `json` and
+  the line went to NEEDS_HUMAN; the prompt (agent-v2) now says to answer as plain JSON text, and
+  the first unknown tool gets an error reply instead of ending the run (a second one still does).
 
 ## Layout
 

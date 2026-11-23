@@ -4,8 +4,11 @@ Claude gets the expense line (no clauses) and ONE read-only tool, search_policy(
 decides what to look up next from what it just read (4.2 -> Appendix B -> an amendment). At
 most AGENT_MAX_STEPS searches per line. After the last allowed search Python tells the model to
 answer and makes the next call with tool_choice "none". If the model still asks for another
-search, or asks for any other tool, the run stops and the line goes to NEEDS_HUMAN with the
-Python checks kept.
+search, the run stops and the line goes to NEEDS_HUMAN with the Python checks kept.
+
+A tool with any other name is never run. The first time in a run, the model gets an error
+tool_result telling it only search_policy exists and to answer in plain JSON text (this does
+not count as a search). A second unknown tool in the same run stops it -> NEEDS_HUMAN.
 
 The retrieved set is the union of the clauses returned by the agent's own searches; the same
 guards, decide.py and audit trail as the fixed path are used on the final answer.
@@ -26,7 +29,7 @@ from expaudit.prompts import AGENT_SYSTEM_PROMPT
 from expaudit.schema import ModelAnswer, parse_answer
 from expaudit.search import search
 
-PROMPT_VERSION = "agent-v1"
+PROMPT_VERSION = "agent-v2"
 SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT
 TOOL_NAME = "search_policy"
 SEARCH_TOOL = {
@@ -42,6 +45,9 @@ SEARCH_TOOL = {
     },
 }
 LIMIT_MESSAGE = "Search limit reached. Give your final answer now."
+UNKNOWN_TOOL_MESSAGE = ("That tool does not exist. Only search_policy exists. "
+                        "Give your final answer as plain JSON text.")
+MAX_UNKNOWN_TOOLS = 1     # the first unknown tool gets an error reply; the second stops the run
 NO_TOOLS = {"type": "none"}
 
 
@@ -81,7 +87,7 @@ def _run_search(block, info: RunInfo, retrieved: dict[str, dict]) -> dict:
 
 
 def run_agent(client, packet: str, info: RunInfo, model: str,
-              retrieved: dict[str, dict]) -> ModelAnswer:
+              retrieved: dict[str, dict], line_id: str = "") -> ModelAnswer:
     """The tool loop. Fills `retrieved` and `info`; returns a schema-valid answer.
 
     Raises ToolRejected, StepLimit, or ValueError (invalid after one retry). API errors propagate.
@@ -89,6 +95,7 @@ def run_agent(client, packet: str, info: RunInfo, model: str,
     messages: list[dict] = [{"role": "user", "content": packet}]
     retried = False
     last_error = None
+    unknown_tools = 0
     while True:
         kwargs = dict(model=model, max_tokens=config.MAX_TOKENS, system=_system(SYSTEM_PROMPT),
                       tools=[SEARCH_TOOL], messages=messages)
@@ -100,15 +107,23 @@ def run_agent(client, packet: str, info: RunInfo, model: str,
 
         uses = _tool_uses(response)
         if uses:
+            searches = [b for b in uses if b.name == TOOL_NAME]
             for block in uses:
-                if block.name != TOOL_NAME:
-                    raise ToolRejected(f"model asked for tool {block.name!r}, which is not offered")
-            if info.tool_calls + len(uses) > config.AGENT_MAX_STEPS:
+                if block.name != TOOL_NAME:            # never executed
+                    unknown_tools += 1
+                    message = f"model asked for tool {block.name!r}, which is not offered"
+                    if unknown_tools > MAX_UNKNOWN_TOOLS:
+                        raise ToolRejected(message)
+                    audit.log_problem(line_id, f"{message}; replied with an error, run continues")
+            if info.tool_calls + len(searches) > config.AGENT_MAX_STEPS:
                 info.step_limit_hit = True
                 raise StepLimit(f"model asked for more than {config.AGENT_MAX_STEPS} searches")
-            results = [_run_search(b, info, retrieved) for b in uses]
-            if info.tool_calls >= config.AGENT_MAX_STEPS:
-                last = results[-1]
+            results = [_run_search(b, info, retrieved) if b.name == TOOL_NAME else
+                       {"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                        "content": UNKNOWN_TOOL_MESSAGE}
+                       for b in uses]
+            if searches and info.tool_calls >= config.AGENT_MAX_STEPS:
+                last = [r for r, b in zip(results, uses) if b.name == TOOL_NAME][-1]
                 last["content"] = f"{last['content']}\n\n{LIMIT_MESSAGE}"
             messages = messages + [{"role": "assistant", "content": response.content},
                                    {"role": "user", "content": results}]
@@ -167,7 +182,8 @@ def audit_agent(con, line_id: str, client=None, use_cache: bool = True,
             audit.log_problem(line.line_id, reasons[-1])
     else:
         try:
-            answer = run_agent(client or make_client(), packet, info, model, retrieved)
+            answer = run_agent(client or make_client(), packet, info, model, retrieved,
+                               line_id=line.line_id)
         except ToolRejected as exc:
             reasons.append("agent asked for a tool that is not offered (rejected)")
             audit.log_problem(line.line_id, str(exc))

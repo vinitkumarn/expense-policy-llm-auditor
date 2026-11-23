@@ -123,14 +123,49 @@ def test_more_searches_in_one_turn_than_allowed_is_a_step_limit_hit(con, sandbox
 
 
 # --- other tools are rejected -----------------------------------------------------------------
-def test_a_tool_with_another_name_is_rejected(con, sandbox, monkeypatch):
+def test_a_second_unknown_tool_is_rejected(con, sandbox, monkeypatch):
     ran = []
     monkeypatch.setattr(agent, "search", lambda *a, **k: ran.append(a) or [])
-    d, info, client = run(con, "S05", tool("S05", name="approve_expense"), answer())
-    assert len(client.calls) == 1 and ran == [] and info.tool_calls == 0
+    d, info, client = run(con, "S05", tool("S05", name="approve_expense"),
+                          tool("S05", name="approve_expense"), answer())
+    assert len(client.calls) == 2 and ran == [] and info.tool_calls == 0
     assert d.status == "NEEDS_HUMAN" and d.codes == ["MISSING_RECEIPT"]
     assert any("not offered" in r for r in d.needs_human_reasons)
-    assert "'approve_expense', which is not offered" in log_text()
+    assert log_text().count("'approve_expense', which is not offered") == 2
+    assert cache_files() == []
+
+
+def test_unknown_tool_json_once_then_text_answer_is_ok(con, sandbox):
+    # Real-run finding: the agent tried to hand back its answer through a tool named 'json'.
+    from conftest import ToolCall
+    d, info, client = run(con, "X01", tool("4.2"), tool("Appendix C"),
+                          ToolCall(answer(X01_MEAL), name="json"), answer(X01_MEAL))
+    assert len(client.calls) == 4
+    assert info.tool_calls == 2 and info.queries == ["4.2", "Appendix C"]   # json not a search
+    res = tool_results(client.calls[3])
+    assert res == [{"type": "tool_result", "tool_use_id": "toolu_003", "is_error": True,
+                    "content": agent.UNKNOWN_TOOL_MESSAGE}]
+    assert "toolu_003" == client.calls[3]["messages"][-2]["content"][0].id
+    assert d.status == "OK" and d.codes == ["MEAL_OVER_LIMIT"]
+    assert d.dollars_out_of_policy == D("10.00")
+    assert "'json', which is not offered" in log_text()
+
+
+def test_unknown_tool_twice_needs_human(con, sandbox):
+    d, info, client = run(con, "X01", tool("{}", name="json"), tool("4.2"),
+                          tool("{}", name="json"), answer(X01_MEAL))
+    assert len(client.calls) == 3 and info.tool_calls == 1
+    assert d.status == "NEEDS_HUMAN" and d.dollars_out_of_policy is None
+    assert any("not offered" in r for r in d.needs_human_reasons)
+    assert log_text().count("'json', which is not offered") == 2
+    assert cache_files() == []
+
+
+def test_agent_prompt_says_answer_as_text_not_a_tool():
+    assert agent.PROMPT_VERSION == "agent-v2"
+    assert ("The only tool is search_policy. Give your\nfinal answer as plain JSON text in your "
+            "message, never as a tool call.") in AGENT_SYSTEM_PROMPT
+    assert "never as a tool call" not in POLICY_GUIDANCE
 
 
 def test_bad_tool_input_is_an_error_result_and_counts(con, sandbox):
