@@ -40,6 +40,7 @@ RECLASS = "RECLASS"
 ACTION_ORDER = [REJECT, RECOVER, HOLD, REQUEST_RECEIPT, RECLASS]
 
 CLIENT_CLAUSE = "4.3"   # client entertainment limit (policy 4.3; names required by 4.4)
+ATTENDEES_MISSING = "attendee count missing (4.4)"
 
 # A limit finding should cite the rule clause (4.2, 5.1, ...) as well as the appendix that holds
 # the number. Citing only appendices adds this note; the decision itself is unchanged.
@@ -158,12 +159,18 @@ def _approver(codes: list[str], out: Decimal, grade: str) -> str:
 
 
 def decide(line: Line, findings: list[Finding], needs_human_reasons=(),
-           client_meal: bool = False, attendee_names_quoted: bool = False) -> Decision:
+           client_meal: bool = False, attendee_names_quoted: bool = False,
+           check_attendees: bool = False) -> Decision:
     """Turn verified findings into the line decision.
 
     client_meal / attendee_names_quoted: the line is a client meal (quote verified by the
     guards) and the memo lists attendee names (quote verified). Policy 4.3 sets the client
     limit, 4.4 requires the names; either gap -> NEEDS_HUMAN.
+
+    check_attendees: policy 4.4, every group meal states the number of attendees. On a Meals
+    line with the field blank, a (verified) finding must carry attendees_count, else
+    NEEDS_HUMAN. Skipped when the line is MISCATEGORIZED (not really a meal). The model paths
+    turn this on; the naive/rules baselines keep their own handling.
     """
     by_code: dict[str, Finding] = {}
     for f in findings:
@@ -178,6 +185,10 @@ def decide(line: Line, findings: list[Finding], needs_human_reasons=(),
             reasons.append(f"client meal must use {CLIENT_CLAUSE}")
         if not attendee_names_quoted:
             reasons.append("4.4 attendee names missing")
+    if (check_attendees and line.category == "Meals" and line.attendees_count is None
+            and "MISCATEGORIZED" not in by_code
+            and not any(f.attendees_count is not None for f in findings)):
+        reasons.append(ATTENDEES_MISSING)
     dollars_by_code: dict[str, Decimal | None] = {}
     for code, f in by_code.items():
         if code == "AIRFARE_CLASS":

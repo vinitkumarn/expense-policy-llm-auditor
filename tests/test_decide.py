@@ -269,3 +269,38 @@ def test_client_meal_citing_4_3_but_no_names_needs_human():
 def test_normal_dinner_unaffected_by_the_client_rule():
     d = decide(make_line(amount=D("340.00"), attendees_count=3), [MEAL("85")])
     assert d.status == "OK" and d.dollars_out_of_policy == D("85.00")
+
+
+# --- 4.4 attendee count: Python decides when the field is blank (model paths) ----------------
+def test_g02_style_blank_attendees_no_findings_needs_human():
+    line = make_line(amount=D("260.00"), attendees_count=None, city="San Francisco",
+                     memo="Group dinner with the implementation team.")
+    d = decide(line, [], check_attendees=True)
+    assert d.status == "NEEDS_HUMAN" and d.needs_human_reasons == ["attendee count missing (4.4)"]
+    assert d.dollars_out_of_policy is None and d.approver is None and d.actions == []
+
+
+def test_w05_style_blank_field_verified_attendees_from_memo_unchanged():
+    line = make_line(amount=D("680.00"), attendees_count=None, city="Dallas")
+    d = decide(line, [Finding("MEAL_OVER_LIMIT", ("4.3",), limit_amount=D("150"),
+                              attendees_count=4)],
+               client_meal=True, attendee_names_quoted=True, check_attendees=True)
+    assert d.status == "OK" and d.dollars_out_of_policy == D("80.00")
+    assert d.approver == "MANAGER" and d.actions == [REJECT]
+
+
+def test_one_person_dinner_with_field_filled_unchanged():
+    d = decide(make_line(amount=D("50.00"), attendees_count=1), [], check_attendees=True)
+    assert d.status == "OK" and d.codes == [] and d.approver == "NONE"
+
+
+def test_a01_style_miscategorized_meals_line_not_held_for_attendees():
+    line = make_line(merchant="Hilton Garden Inn", amount=D("189.00"), attendees_count=None,
+                     memo="hotel 1 night")
+    d = decide(line, [Finding("MISCATEGORIZED", ("2.2",))], check_attendees=True)
+    assert d.status == "OK" and d.actions == [RECLASS]
+
+
+def test_attendee_check_off_by_default_baselines_unchanged():
+    d = decide(make_line(amount=D("260.00"), attendees_count=None), [])
+    assert d.status == "OK" and d.needs_human_reasons == []
