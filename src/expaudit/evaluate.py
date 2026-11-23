@@ -157,6 +157,7 @@ def model_metrics(results: list[LineResult]) -> dict:
         "model_calls": sum(i.model_calls for i in infos),
         "cache_hit_rate": sum(i.cache_hit for i in infos) / n if n else None,
         "lines_with_guard_failures": sum(bool(i.guard_problems) for i in infos),
+        "explanations_hidden": sum(i.explanation_hidden for i in infos),
         "model_errors": sum(i.error is not None for i in infos),
         "input_tokens": sum(i.input_tokens for i in infos),
         "output_tokens": sum(i.output_tokens for i in infos),
@@ -199,6 +200,8 @@ def _model_block(mm: dict) -> list[str]:
         f"| Model calls (retries included) | {mm['model_calls']} |",
         f"| Cache hit rate | {_pct(mm['cache_hit_rate'])} |",
         f"| Lines with guard failures | {mm['lines_with_guard_failures']} |",
+        f"| Explanations hidden (unverified number; decision kept) | "
+        f"{mm['explanations_hidden']} |",
         f"| Lines with model call errors | {mm['model_errors']} |",
         f"| Tokens in / out / cache read | {mm['input_tokens']} / {mm['output_tokens']} / "
         f"{mm['cache_read_input_tokens']} |",

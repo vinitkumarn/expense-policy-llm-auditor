@@ -44,6 +44,8 @@ class RunInfo:
     retrieved_ids: list[str] = field(default_factory=list)
     cited_ids: list[str] = field(default_factory=list)
     guard_problems: list[str] = field(default_factory=list)
+    explanation_hidden: bool = False
+    explanation: str | None = None          # what may be shown (hidden text if unverified)
     error: str | None = None
     # Agent path only (stay 0 / empty on the fixed path).
     tool_calls: int = 0
@@ -177,11 +179,14 @@ def finish(line: Line, python_findings: list[Finding], answer: ModelAnswer | Non
     findings = list(python_findings)
     if answer is not None:
         info.cited_ids = sorted({c for f in answer.findings for c in f.cited_clause_ids})
-        info.guard_problems = run_guards(answer, line, retrieved, set(clauses_by_id()))
+        info.guard_problems, shown, info.explanation_hidden = run_guards(
+            answer, line, retrieved, set(clauses_by_id()))
         if info.guard_problems:
             reasons += [f"guard: {p}" for p in info.guard_problems]
         else:
+            info.explanation = shown.explanation
             findings += to_findings(answer)
+            # The cache keeps the model's own answer; on a hit the guards run again.
             if use_cache and not info.cache_hit:
                 cache.put(key, {"answer": json.loads(answer.model_dump_json()),
                                 "queries": list(info.queries)}, cache_dir)
@@ -199,6 +204,7 @@ def finish(line: Line, python_findings: list[Finding], answer: ModelAnswer | Non
         "cache_creation_input_tokens": info.cache_creation_input_tokens,
         "cost_usd": info.cost_usd, "latency_ms": info.latency_ms,
         "model_calls": info.model_calls, "guard_problem_count": len(info.guard_problems),
+        "explanation_hidden": info.explanation_hidden,
         "tool_calls": info.tool_calls, "step_limit_hit": info.step_limit_hit,
         "tool_result_ids": info.tool_result_ids, "status": decision.status,
     })

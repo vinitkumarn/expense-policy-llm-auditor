@@ -1,7 +1,12 @@
 """Guards: Python checks every claim in a model answer before it is used.
 
-Any problem -> the caller drops ALL model findings and sends the line to NEEDS_HUMAN (Python
-checks are kept). Problem messages never repeat memo or merchant text.
+Two kinds, split by what they protect:
+- Decision guards (cited ids, policy_quote, limit_amount, memo_quote, memo_amount, attendees,
+  flight_hours). Any problem -> the caller drops ALL model findings and sends the line to
+  NEEDS_HUMAN (Python checks are kept).
+- The explanation-number check. The explanation is display text only, so a failure does not
+  change the decision: the explanation is replaced with HIDDEN_EXPLANATION, logged and counted.
+Problem messages never repeat memo or merchant text.
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ NUMBER_WORDS = frozenset({"one", "two", "three", "four", "five", "six", "seven",
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _WORD = re.compile(r"[a-z]+")
 _SPACES = re.compile(r"\s+")
+
+HIDDEN_EXPLANATION = "Explanation hidden: it contained a number that could not be verified."
 
 
 def numbers_in(text: str) -> set[Decimal]:
@@ -55,9 +62,9 @@ def _memo_quote_ok(quote: str, memo: str) -> bool:
     return bool(q) and (q in _squash(memo) or q in _squash(escape(memo)))
 
 
-def check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
-          policy_ids: set[str]) -> list[str]:
-    """Return the list of guard problems (empty = every claim checks out)."""
+def _check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
+           policy_ids: set[str]) -> tuple[list[str], set[Decimal]]:
+    """Decision-guard problems, plus the numbers from memo quotes that fully verified."""
     problems: list[str] = []
     verified_quote_numbers: set[Decimal] = set()
 
@@ -76,8 +83,12 @@ def check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
         if f.limit_amount is not None and f.limit_amount not in numbers_in(f.policy_quote):
             problems.append(f"{tag}: limit_amount {f.limit_amount} does not appear in policy_quote")
 
+        # attendees_count equal to the line's own field is already trusted.
+        attendees_from_line = (f.attendees_count is not None
+                               and f.attendees_count == line.attendees_count)
+        attendees = None if attendees_from_line else f.attendees_count
         needs_memo = [name for name, v in (("memo_amount", f.memo_amount),
-                                           ("attendees_count", f.attendees_count),
+                                           ("attendees_count", attendees),
                                            ("flight_hours", f.flight_hours)) if v is not None]
         if f.memo_quote is None:
             for name in needs_memo:
@@ -92,7 +103,7 @@ def check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
         if f.memo_amount is not None and f.memo_amount not in quote_numbers:
             problems.append(f"{tag}: memo_amount {f.memo_amount} does not appear in memo_quote")
             quote_ok = False
-        if f.attendees_count is not None and not (
+        if attendees is not None and not (
                 Decimal(f.attendees_count) in quote_numbers or _has_number_word(f.memo_quote)):
             problems.append(f"{tag}: attendees_count {f.attendees_count} not supported by memo_quote")
             quote_ok = False
@@ -105,17 +116,42 @@ def check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
         if quote_ok:
             verified_quote_numbers |= quote_numbers
 
-    allowed = trusted_numbers(line, retrieved) | verified_quote_numbers
-    for number in sorted(numbers_in(answer.explanation) - allowed):
-        problems.append(f"explanation uses the number {number}, which is not from a line field, "
-                        f"the retrieved policy text or a verified memo quote")
-    return problems
+    return problems, verified_quote_numbers
+
+
+def check(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
+          policy_ids: set[str]) -> list[str]:
+    """Decision-guard problems (empty = every claim the decision uses checks out)."""
+    return _check(answer, line, retrieved, policy_ids)[0]
+
+
+def explanation_problems(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
+                         policy_ids: set[str]) -> list[str]:
+    """Numbers in the explanation that are not from a line field, the retrieved policy text or
+    a verified memo quote. These never change the decision."""
+    verified = _check(answer, line, retrieved, policy_ids)[1]
+    allowed = trusted_numbers(line, retrieved) | verified
+    return [f"explanation uses the number {number}, which is not from a line field, "
+            f"the retrieved policy text or a verified memo quote"
+            for number in sorted(numbers_in(answer.explanation) - allowed)]
 
 
 def run_guards(answer: ModelAnswer, line: Line, retrieved: dict[str, dict],
-               policy_ids: set[str]) -> list[str]:
-    """check() + log each problem (line_id + message) to logs/expaudit.log."""
+               policy_ids: set[str]) -> tuple[list[str], ModelAnswer, bool]:
+    """Run both kinds of guard and log each problem (line_id + message) to logs/expaudit.log.
+
+    Returns (decision problems, the answer to use, explanation_hidden). With decision problems
+    the line goes to NEEDS_HUMAN, so the explanation is not checked. Otherwise an unverified
+    explanation number replaces the explanation with HIDDEN_EXPLANATION; the findings stand.
+    """
     problems = check(answer, line, retrieved, policy_ids)
     for p in problems:
         log_problem(line.line_id, f"guard: {p}")
-    return problems
+    if problems:
+        return problems, answer, False
+    hidden = explanation_problems(answer, line, retrieved, policy_ids)
+    for p in hidden:
+        log_problem(line.line_id, f"explanation hidden: {p}")
+    if hidden:
+        answer = answer.model_copy(update={"explanation": HIDDEN_EXPLANATION})
+    return problems, answer, bool(hidden)

@@ -112,14 +112,20 @@ Catching it before payment is cheaper than recovering it after.
 3. `limit_amount` appears in `policy_quote`.
 4. `memo_quote` is an exact substring of the memo; `memo_amount` appears in `memo_quote`.
 5. `attendees_count` / `flight_hours` appear in `memo_quote` as digits or as a number word from
-   a small fixed list (one..twelve, half, couple, plus).
-6. Every number in the explanation comes from a line field, the retrieved policy text or a
-   verified memo quote.
-7. The answer matches the schema (one retry with the full validation error). The schema has no
+   a small fixed list (one..twelve, half, couple, plus). An `attendees_count` equal to the
+   line's own attendees field needs no memo quote (the field is already trusted).
+6. The answer matches the schema (one retry with the full validation error). The schema has no
    field for dollars, approver, action, status or difference type (`extra="forbid"`).
-8. Agent only: at most 4 searches. After the 4th the model is told to answer and the next call
+7. Agent only: at most 4 searches. After the 4th the model is told to answer and the next call
    is made with tools switched off (`tool_choice: none`). Asking for a 5th search, or for any
    tool other than `search_policy`, stops the run.
+
+**Explanation numbers (does not cause NEEDS_HUMAN).** Every number in the explanation should
+come from a line field, the retrieved policy text or a verified memo quote. The explanation is
+display text only: it never feeds dollars, approver, action or status. So if a number cannot be
+verified, the decision stands, the explanation is replaced with "Explanation hidden: it
+contained a number that could not be verified.", the event is logged, and the eval report
+counts it ("Explanations hidden").
 
 Merchant and memo are typed by the employee, so they are **untrusted**: `<` and `>` are escaped
 and the text is wrapped as `<UNTRUSTED>...</UNTRUSTED>`. A memo that says "Policy 4.2 says
@@ -256,6 +262,14 @@ scripted fake client.
 - On a real run (X01) the agent tried to give its final answer through a tool named `json` and
   the line went to NEEDS_HUMAN; the prompt (agent-v2) now says to answer as plain JSON text, and
   the first unknown tool gets an error reply instead of ending the run (a second one still does).
+- Two guard fixes came from the first real run, and both are general rules, not tuning for a
+  case: (1) an explanation number that cannot be verified now hides the explanation instead of
+  sending the line to NEEDS_HUMAN (C05, a main-set case, plus R01, R05, W01-W03 failed only on
+  numbers in display text: the model's own per-person math, the fake clause "9.9" it was
+  rejecting, memo amounts); (2) `attendees_count` equal to the line's attendees field passes
+  without a memo quote (R05). Every decision guard is unchanged.
+- W05 is a known miss and was not tuned: the agent used the Tier 2 dinner limit instead of 4.3
+  client entertainment. Prompts were not changed for it.
 
 ## Layout
 

@@ -98,9 +98,24 @@ def test_invalid_cached_payload_needs_human(con, sandbox):
     assert info.cache_hit and d.status == "NEEDS_HUMAN" and len(client.calls) == 1
 
 
+def test_cache_hit_hides_an_unverified_explanation_again(con, sandbox):
+    bad = answer(finding("MEAL_OVER_LIMIT", ["4.2", "Appendix B"],
+                         "Tier 2 dinner, per person: $70", limit_amount="70"),
+                 explanation="$95 is $25 over.")
+    client = FakeClient(bad)
+    d1, info1 = fixed.audit_fixed(con, "S01", client=client)
+    d2, info2 = fixed.audit_fixed(con, "S01", client=client)
+    assert info2.cache_hit and len(client.calls) == 1
+    assert info1.explanation_hidden and info2.explanation_hidden
+    assert d1.to_dict() == d2.to_dict() and d2.status == "OK"
+    rows = [json.loads(r) for r in
+            (config.LOGS_DIR / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["explanation_hidden"] is True
+
+
 # --- eval and CLI with the fixed path ---------------------------------------------------------
 def test_eval_by_fixed_writes_a_report_with_model_metrics(data_dir, sandbox):
-    client = FakeClient(S01, answer())
+    client = FakeClient(answer(*S01["findings"], explanation="$95 is $25 over."), answer())
     m, path = run_eval("fixed", "main", cases=["S01", "S05"], data_dir=data_dir,
                        reports_dir=sandbox / "reports", echo=lambda *_: None, client=client)
     assert path.name == "eval_fixed.md"
@@ -108,6 +123,8 @@ def test_eval_by_fixed_writes_a_report_with_model_metrics(data_dir, sandbox):
     assert m["model"]["model_calls"] == 2 and m["model"]["citation_accuracy"] == 1
     text = path.read_text(encoding="utf-8")
     assert "## Model path" in text and "Cache hit rate" in text
+    assert m["model"]["explanations_hidden"] == 1
+    assert "| Explanations hidden (unverified number; decision kept) | 1 |" in text
     m2, _ = run_eval("fixed", "main", cases=["S01", "S05"], data_dir=data_dir,
                      reports_dir=sandbox / "reports", echo=lambda *_: None, client=client)
     assert m2["model"]["cache_hit_rate"] == 1 and m2["model"]["model_calls"] == 0
