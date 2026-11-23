@@ -16,6 +16,24 @@ def test_difference_types_match_the_design_table():
     assert DIFFERENCE_TYPE == generator.DIFFERENCE_TYPE
 
 
+# --- citation incomplete: appendix-only limit finding is kept, only a note is added ----------
+@pytest.mark.parametrize("code, rule, line_kw", [
+    ("MEAL_OVER_LIMIT", "4.2", {"amount": D("340.00"), "attendees_count": 3}),
+    ("LODGING_OVER_LIMIT", "5.1", {"amount": D("600.00"), "nights": 2}),
+])
+def test_limit_finding_citing_only_appendix_gets_note_decision_unchanged(code, rule, line_kw):
+    line = make_line(**line_kw)
+    full = decide(line, [Finding(code, (rule, "Appendix B"), limit_amount=D("85"))])
+    only = decide(line, [Finding(code, ("Appendix B",), limit_amount=D("85"))])
+    assert full.notes == []
+    assert only.notes == [f"citation incomplete: {code} cites only Appendix B"]
+    for attr in ("codes", "dollars_by_code", "dollars_out_of_policy", "dollars_held",
+                 "approver", "actions", "status", "needs_human_reasons"):
+        assert getattr(only, attr) == getattr(full, attr), attr
+    assert only.status == "OK" and only.dollars_out_of_policy > 0
+    assert only.to_dict()["notes"] == only.notes
+
+
 # --- dollars per code -------------------------------------------------------------------------
 def test_meal_over_limit_times_attendees():
     d = decide(make_line(amount=D("340.00"), attendees_count=3), [MEAL("85")])
