@@ -44,7 +44,7 @@ def test_prompt_model_or_policy_change_makes_a_new_call(con, sandbox, monkeypatc
     fixed.audit_fixed(con, "S01", client=client)
     kwargs = {}
     if change == "prompt":
-        kwargs["prompt_version"] = "fixed-v2"
+        kwargs["prompt_version"] = "fixed-test-other"
     elif change == "model":
         kwargs["model"] = "claude-opus-5-5"
     else:

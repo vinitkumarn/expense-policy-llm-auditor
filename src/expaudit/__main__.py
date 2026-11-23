@@ -1,9 +1,10 @@
 """Command line.
 
 python -m expaudit build [--out DIR]
-python -m expaudit run --line S01 --by naive|rules|fixed [--no-cache]
-python -m expaudit eval --by naive|rules|fixed [--set main|redteam|reworded] [--cases S01,S02]
-                        [--limit N] [--no-cache]
+python -m expaudit run --line S01 --by naive|rules|fixed|agent [--no-cache]
+python -m expaudit eval --by naive|rules|fixed|agent [--set main|redteam|reworded]
+                        [--cases S01,S02] [--limit N] [--no-cache]
+python -m expaudit compare [--set main|redteam|reworded]
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--limit", type=int)
     ev.add_argument("--data", type=Path, default=config.DATA_DIR, help=argparse.SUPPRESS)
     ev.add_argument("--reports", type=Path, default=config.REPORTS_DIR, help=argparse.SUPPRESS)
+
+    cmp = sub.add_parser("compare", help="naive | rules | fixed | agent side by side")
+    cmp.add_argument("--set", choices=list(SETS), default="main")
+    cmp.add_argument("--data", type=Path, default=config.DATA_DIR, help=argparse.SUPPRESS)
+    cmp.add_argument("--reports", type=Path, default=config.REPORTS_DIR, help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
 
@@ -75,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
                                    data_dir=args.data, reports_dir=args.reports,
                                    use_cache=not args.no_cache)
                 print(f"wrote {path}")
+            return 0
+
+        if args.command == "compare":
+            from expaudit.compare import compare
+            print(f"wrote {compare(args.set, args.data, args.reports)}")
             return 0
     except (FileNotFoundError, KeyError, RuntimeError) as exc:
         print(f"error: {exc}")

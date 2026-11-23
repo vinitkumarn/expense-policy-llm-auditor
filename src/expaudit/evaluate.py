@@ -17,8 +17,8 @@ from expaudit.baselines import BASELINES, audit
 from expaudit.db import DB_FILE, connect
 from expaudit.decide import ACTION_ORDER, Decision
 
-AUDITORS = ("naive", "rules", "fixed")
-MODEL_PATHS = ("fixed",)
+AUDITORS = ("naive", "rules", "fixed", "agent")
+MODEL_PATHS = ("fixed", "agent")
 
 SETS = {
     "main": (config.PLAN_FILE, ""),
@@ -34,6 +34,9 @@ def audit_line(con, line_id: str, by: str, *, client=None, use_cache: bool = Tru
     if by == "fixed":
         from expaudit.fixed import audit_fixed
         return audit_fixed(con, line_id, client=client, use_cache=use_cache)
+    if by == "agent":
+        from expaudit.agent import audit_agent
+        return audit_agent(con, line_id, client=client, use_cache=use_cache)
     raise ValueError(f"unknown auditor {by!r}; choose from {list(AUDITORS)}")
 
 
@@ -56,7 +59,7 @@ def load_labels(set_name: str, data_dir: Path | None = None) -> list[dict]:
 class LineResult:
     label: dict
     decision: Decision
-    info: object = None          # fixed.RunInfo on model paths
+    info: object = None          # fixed.RunInfo on model paths (both)
     found: list[str] = field(default_factory=list)
     missed: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
@@ -140,6 +143,8 @@ def model_metrics(results: list[LineResult]) -> dict:
     infos = [r.info for r in results if r.info is not None]
     n = len(infos)
     costs = [i.cost_usd for i in infos]
+    cost = None if any(c is None for c in costs) else sum(costs, Decimal("0"))
+    tool_calls = [i.tool_calls for i in infos]
     # Citation accuracy: for each expected finding the model path reported, are the expected
     # clause ids all among the cited ids?
     cite_total = cite_ok = 0
@@ -156,8 +161,14 @@ def model_metrics(results: list[LineResult]) -> dict:
         "input_tokens": sum(i.input_tokens for i in infos),
         "output_tokens": sum(i.output_tokens for i in infos),
         "cache_read_input_tokens": sum(i.cache_read_input_tokens for i in infos),
-        "cost_usd": None if any(c is None for c in costs) else sum(costs, Decimal("0")),
+        "cost_usd": cost,
+        "cost_per_line_usd": (cost / n).quantize(Decimal("0.000001")) if cost is not None and n
+        else None,
         "avg_latency_ms": sum(i.latency_ms for i in infos) / n if n else None,
+        "max_latency_ms": max((i.latency_ms for i in infos), default=None),
+        "avg_tool_calls": sum(tool_calls) / n if n else None,
+        "max_tool_calls": max(tool_calls, default=None),
+        "step_limit_hits": sum(i.step_limit_hit for i in infos),
         "citation_accuracy": cite_ok / cite_total if cite_total else None,
         "citations_checked": cite_total,
     }
@@ -173,7 +184,12 @@ def _fmt(value) -> str:
 
 def _model_block(mm: dict) -> list[str]:
     cost = "unknown" if mm["cost_usd"] is None else f"${mm['cost_usd']:.4f}"
+    per_line = ("unknown" if mm["cost_per_line_usd"] is None
+                else f"${mm['cost_per_line_usd']:.4f}")
     latency = "n/a" if mm["avg_latency_ms"] is None else f"{mm['avg_latency_ms']:.0f} ms"
+    max_latency = "n/a" if mm["max_latency_ms"] is None else f"{mm['max_latency_ms']} ms"
+    tools = ("n/a" if mm["avg_tool_calls"] is None
+             else f"{mm['avg_tool_calls']:.2f} / {mm['max_tool_calls']}")
     return [
         "",
         "## Model path",
@@ -187,7 +203,10 @@ def _model_block(mm: dict) -> list[str]:
         f"| Tokens in / out / cache read | {mm['input_tokens']} / {mm['output_tokens']} / "
         f"{mm['cache_read_input_tokens']} |",
         f"| Cost | {cost} |",
-        f"| Avg latency per line | {latency} |",
+        f"| Cost per line | {per_line} |",
+        f"| Latency per line, avg / max | {latency} / {max_latency} |",
+        f"| Tool calls per line, avg / max | {tools} |",
+        f"| Step-limit hits (limit {config.AGENT_MAX_STEPS} searches) | {mm['step_limit_hits']} |",
         f"| Citation accuracy (expected ids within cited ids) | "
         f"{_pct(mm['citation_accuracy'])} of {mm['citations_checked']} findings |",
     ]
@@ -282,4 +301,22 @@ def run_eval(by: str, set_name: str = "main", cases: list[str] | None = None,
     reports_dir.mkdir(parents=True, exist_ok=True)
     path = reports_dir / f"eval_{by}{SETS[set_name][1]}.md"
     path.write_text(render_report(by, set_name, results, m), encoding="utf-8", newline="\n")
+    write_json(by, set_name, results, m, reports_dir)
     return m, path
+
+
+def json_path(by: str, set_name: str, reports_dir: Path) -> Path:
+    return Path(reports_dir) / f"eval_{by}{SETS[set_name][1]}.json"
+
+
+def write_json(by: str, set_name: str, results: list[LineResult], m: dict,
+               reports_dir: Path) -> Path:
+    """Machine-readable copy of the eval (read by `compare`). Decimals are written as strings."""
+    payload = {
+        "by": by, "set": set_name, "metrics": m,
+        "lines": [{"line_id": r.label["line_id"], "all_ok": r.all_ok, "dollars_ok": r.dollars_ok,
+                   "codes": r.decision.codes} for r in results],
+    }
+    path = json_path(by, set_name, reports_dir)
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8", newline="\n")
+    return path

@@ -39,21 +39,35 @@ def make_line(**overrides) -> Line:
 
 # --- scripted fake Claude client (no real API is ever called in tests) -----------------------
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from expaudit import config
 
 
+@dataclass
+class ToolCall:
+    input: dict
+    name: str = "search_policy"
+
+
+def tool(query, name="search_policy"):
+    """A scripted tool_use request (search_policy by default)."""
+    return ToolCall({"query": query}, name)
+
+
 class FakeClient:
     """Stands in for anthropic.Anthropic(). Each create() pops the next scripted reply.
 
-    A reply is a str (the model's text), a dict (dumped as JSON) or an Exception (raised).
+    A reply is a str (the model's text), a dict (dumped as JSON), an Exception (raised), or a
+    ToolCall / list of ToolCalls (the model asks to use tools; stop_reason "tool_use").
     Every call's keyword arguments are kept in .calls for the tests to inspect.
     """
 
     def __init__(self, *replies):
         self.replies = list(replies)
         self.calls: list[dict] = []
+        self.tool_ids = 0
         self.messages = SimpleNamespace(create=self._create)
 
     def _create(self, **kwargs):
@@ -63,6 +77,17 @@ class FakeClient:
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
+        usage = SimpleNamespace(input_tokens=1000, output_tokens=200,
+                                cache_read_input_tokens=0, cache_creation_input_tokens=800)
+        if isinstance(reply, ToolCall):
+            reply = [reply]
+        if isinstance(reply, list):
+            blocks = []
+            for t in reply:
+                self.tool_ids += 1
+                blocks.append(SimpleNamespace(type="tool_use", id=f"toolu_{self.tool_ids:03d}",
+                                              name=t.name, input=t.input))
+            return SimpleNamespace(content=blocks, stop_reason="tool_use", usage=usage)
         text = reply if isinstance(reply, str) else json.dumps(reply)
         return SimpleNamespace(
             content=[SimpleNamespace(type="text", text=text)], stop_reason="end_turn",
