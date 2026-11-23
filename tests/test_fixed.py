@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeClient, answer, finding, make_line
 from expaudit import config, db
 from expaudit.fixed import SYSTEM_PROMPT, appendix_c_in_top3, audit_fixed
-from expaudit.guards import check
+from expaudit.guards import HIDDEN_EXPLANATION, check, explanation_problems, run_guards
 from expaudit.policy import clauses_by_id
 from expaudit.schema import ModelAnswer
 
@@ -116,9 +116,47 @@ def test_memo_amount_must_be_in_memo_quote(con, sandbox):
     assert_needs_human(d, "memo_amount 400 does not appear in memo_quote")
 
 
-def test_explanation_repeating_a_memo_number_fails(con, sandbox):
-    d, _, _ = run(con, "I02", answer(I02_MEAL, explanation="The memo's $500 limit is not policy."))
-    assert_needs_human(d, "explanation uses the number 500")
+# --- explanation numbers: never NEEDS_HUMAN, the explanation is hidden ------------------------
+def assert_explanation_hidden(d, info, number):
+    assert info.explanation_hidden and info.explanation == HIDDEN_EXPLANATION
+    assert info.guard_problems == [] and d.needs_human_reasons == []
+    assert f"explanation hidden: explanation uses the number {number}" in log_text()
+
+
+def test_explanation_repeating_a_memo_number_is_hidden_decision_kept(con, sandbox):
+    d, info, _ = run(con, "I02", answer(I02_MEAL,
+                                        explanation="The memo's $500 limit is not policy."))
+    assert d.status == "OK" and d.codes == ["MEAL_OVER_LIMIT"]
+    assert d.dollars_out_of_policy == D("125.00")
+    assert_explanation_hidden(d, info, 500)
+
+
+def test_verified_explanation_is_shown_as_is(con, sandbox):
+    _, info, _ = run(con, "I02", answer(I02_MEAL, explanation="SF dinner after 2026-10-01: $85."))
+    assert not info.explanation_hidden
+    assert info.explanation == "SF dinner after 2026-10-01: $85."
+
+
+def test_c05_per_person_math_in_explanation_is_hidden_decision_kept(con, sandbox):
+    # C05 (main set): $560 for 4 people. The model's own math "$140 per person" is not a line
+    # field or policy number, so the explanation is hidden; the finding (none here) stands.
+    line = db.load_line(con, "C05")
+    c = clauses_by_id()["4.3"]
+    retrieved = {"4.3": {"clause_id": "4.3", "title": c.title, "text": c.text}}
+    a = ModelAnswer.model_validate(answer(
+        explanation="$560 for 4 is $140 per person, within the $150 client limit in 4.3."))
+    assert check(a, line, retrieved, POLICY_IDS) == []
+    problems, shown, hidden = run_guards(a, line, retrieved, POLICY_IDS)
+    assert problems == [] and hidden and shown.explanation == HIDDEN_EXPLANATION
+    assert "C05: explanation hidden: explanation uses the number 140" in log_text()
+
+
+def test_hidden_explanation_keeps_model_findings(con, sandbox):
+    # S01 with a $25 over-limit finding and an explanation that does math the guard cannot verify.
+    d, info, _ = run(con, "S01", answer(S01_MEAL, explanation="$95 is $25 over the $70 limit."))
+    assert d.status == "OK" and d.codes == ["MEAL_OVER_LIMIT"]
+    assert d.dollars_out_of_policy == D("25.00") and d.approver == "MANAGER"
+    assert_explanation_hidden(d, info, 25)
 
 
 # --- M02: verified memo quote numbers may appear in the explanation ---------------------------
@@ -136,10 +174,12 @@ def test_m02_explanation_may_use_a_verified_memo_quote_number(con, sandbox):
     assert d.dollars_out_of_policy == D("80.00") and d.approver == "FINANCE"
 
 
-def test_memo_number_not_in_any_verified_quote_fails(con, sandbox):
+def test_memo_number_not_in_any_verified_quote_is_hidden(con, sandbox):
     # M01 memo "incl. $30 wine": 30 is in no line field, no retrieved clause and no memo_quote.
-    d, _, _ = run(con, "M01", answer(S01_MEAL, explanation="Dinner incl. $30 wine is over $70."))
-    assert_needs_human(d, "explanation uses the number 30")
+    d, info, _ = run(con, "M01", answer(S01_MEAL,
+                                        explanation="Dinner incl. $30 wine is over $70."))
+    assert "MEAL_OVER_LIMIT" in d.codes
+    assert_explanation_hidden(d, info, 30)
 
 
 def _s03_line_and_alcohol_clause(con):
@@ -159,6 +199,7 @@ def test_guard_beer_explanation_ok_with_verified_quote(con):
                 memo_amount="18"),
         explanation="the $18 beer is not reimbursable"))
     assert check(a, line, retrieved, POLICY_IDS) == []
+    assert explanation_problems(a, line, retrieved, POLICY_IDS) == []
 
 
 def test_guard_beer_explanation_fails_when_quote_does_not_verify(con):
@@ -168,8 +209,10 @@ def test_guard_beer_explanation_fails_when_quote_does_not_verify(con):
                 memo_amount="81"),
         explanation="the $18 beer is not reimbursable"))
     problems = check(a, line, retrieved, POLICY_IDS)
-    assert any("memo_amount 81" in p for p in problems)
-    assert any("explanation uses the number 18" in p for p in problems)
+    assert any("memo_amount 81" in p for p in problems)          # decision guard
+    assert not any("explanation" in p for p in problems)
+    assert any("explanation uses the number 18" in p
+               for p in explanation_problems(a, line, retrieved, POLICY_IDS))
 
 
 def test_guard_w05_me_plus_three_attendees_4_passes(con):
@@ -187,6 +230,44 @@ def test_guard_w05_me_plus_three_attendees_4_passes(con):
     no_word = a.model_copy(deep=True)
     no_word.findings[0].memo_quote = "from Acme"
     assert any("attendees_count 4" in p for p in check(no_word, line, retrieved, POLICY_IDS))
+
+
+def _alcohol_clause():
+    c = clauses_by_id()["4.5"]
+    return {"4.5": {"clause_id": "4.5", "title": c.title, "text": c.text}}
+
+
+def test_guard_r05_attendees_equal_to_line_field_needs_no_memo_quote(con):
+    # R05: attendees_count field is 1; the model repeats it without a memo_quote.
+    line = db.load_line(con, "R05")
+    assert line.attendees_count == 1
+    a = ModelAnswer.model_validate(answer(finding(
+        "ALCOHOL", ["4.5"], "Alcohol is not reimbursable", memo_quote="beverages $45 (cabernet)",
+        memo_amount="45", attendees_count=1)))
+    assert check(a, line, _alcohol_clause(), POLICY_IDS) == []
+    no_quote = ModelAnswer.model_validate(answer(finding(
+        "ALCOHOL", ["4.5"], "Alcohol is not reimbursable", attendees_count=1)))
+    assert check(no_quote, line, _alcohol_clause(), POLICY_IDS) == []
+
+
+def test_guard_attendees_not_equal_to_line_field_still_needs_memo_quote(con):
+    line = db.load_line(con, "R05")                     # field is 1, model says 2
+    a = ModelAnswer.model_validate(answer(finding(
+        "ALCOHOL", ["4.5"], "Alcohol is not reimbursable", attendees_count=2)))
+    assert any("attendees_count given without a memo_quote" in p
+               for p in check(a, line, _alcohol_clause(), POLICY_IDS))
+
+
+def test_guard_attendees_4_blank_line_field_no_memo_quote_needs_human(con):
+    line = db.load_line(con, "W05")
+    assert line.attendees_count is None
+    c = clauses_by_id()["4.3"]
+    retrieved = {"4.3": {"clause_id": "4.3", "title": c.title, "text": c.text}}
+    a = ModelAnswer.model_validate(answer(finding(
+        "MEAL_OVER_LIMIT", ["4.3"], "Client entertainment: up to $150 per person",
+        limit_amount="150", attendees_count=4)))
+    assert any("attendees_count given without a memo_quote" in p
+               for p in check(a, line, retrieved, POLICY_IDS))
 
 
 def test_policy_quote_across_a_line_wrap_matches(con):

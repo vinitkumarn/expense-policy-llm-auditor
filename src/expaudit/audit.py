@@ -50,8 +50,8 @@ AUDIT_FIELDS = (
     "line_id", "by", "model", "prompt_version", "policy_hash", "packet_sha256", "cache_key",
     "cache_hit", "retrieved_ids", "cited_ids", "codes", "input_tokens", "output_tokens",
     "cache_read_input_tokens", "cache_creation_input_tokens", "cost_usd", "latency_ms",
-    "model_calls", "guard_problem_count", "tool_calls", "step_limit_hit", "tool_result_ids",
-    "status",
+    "model_calls", "guard_problem_count", "explanation_hidden", "tool_calls", "step_limit_hit",
+    "tool_result_ids", "status",
 )
 
 
