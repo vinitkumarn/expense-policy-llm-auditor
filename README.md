@@ -290,6 +290,17 @@ scripted fake client.
 
   The "after" column needs a real API key, so it was not run here. The fake-client tests show
   how Python decides each case. naive and rules numbers are unchanged by this fix.
+- Run-to-run variance (S07, main set): in one real run a guard caught an economy-fare amount
+  that the model's memo quote did not support and sent the line to a person; a fresh call on
+  the same line was correct. The guard did its job (no unsupported dollars were used), but the
+  same line can land differently from run to run.
+- G02 (main set: "Group dinner with the implementation team.", attendees field blank) came back
+  OK with $0 in one real run and NEEDS_HUMAN in another. Policy 4.4 is clear, so this moved from
+  the model to a Python rule in decide.py: on the model paths, a Meals line with the attendees
+  field blank needs a finding with a verified attendees_count (for example W05's "me plus
+  three"), otherwise NEEDS_HUMAN, "attendee count missing (4.4)", dollars unknown. A line the
+  model flags as MISCATEGORIZED (A01, a hotel coded as Meals) is not held. No prompt change;
+  naive and rules numbers are unchanged.
 
 ## Layout
 

@@ -444,3 +444,10 @@ def test_client_meal_citing_4_3_must_quote_4_3(con, sandbox):
 def test_not_a_client_meal_is_unchanged(con, sandbox):
     d, _, _ = run(con, "S01", answer(S01_MEAL))
     assert d.status == "OK" and d.dollars_out_of_policy == D("25.00")
+
+
+# --- 4.4 attendee count (G02): Python decides, not the model ----------------------------------
+def test_g02_blank_attendees_model_says_nothing_needs_human(con, sandbox):
+    d, _, _ = run(con, "G02", answer())
+    assert d.status == "NEEDS_HUMAN" and d.needs_human_reasons == ["attendee count missing (4.4)"]
+    assert d.dollars_out_of_policy is None and d.approver is None and d.actions == []

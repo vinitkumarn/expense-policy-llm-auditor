@@ -195,7 +195,7 @@ def finish(line: Line, python_findings: list[Finding], answer: ModelAnswer | Non
                                 "queries": list(info.queries)}, cache_dir)
 
     decision = decide(line, findings, reasons, client_meal=client_meal,
-                      attendee_names_quoted=names_quoted)
+                      attendee_names_quoted=names_quoted, check_attendees=True)
     info.cost_usd = cost_usd(model, info)
     info.latency_ms = int((time.perf_counter() - started) * 1000)
     audit.record({
