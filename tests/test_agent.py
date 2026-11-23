@@ -162,7 +162,7 @@ def test_unknown_tool_twice_needs_human(con, sandbox):
 
 
 def test_agent_prompt_says_answer_as_text_not_a_tool():
-    assert agent.PROMPT_VERSION == "agent-v3"
+    assert agent.PROMPT_VERSION == "agent-v4"
     assert ("The only tool is search_policy. Give your\nfinal answer as plain JSON text in your "
             "message, never as a tool call.") in AGENT_SYSTEM_PROMPT
     assert "never as a tool call" not in POLICY_GUIDANCE
@@ -230,6 +230,8 @@ def test_both_paths_share_the_same_policy_guidance():
     assert "use the limit in force\non the transaction date" in POLICY_GUIDANCE
     assert FIXED_SYSTEM_PROMPT.endswith(POLICY_GUIDANCE)
     assert AGENT_SYSTEM_PROMPT.endswith(POLICY_GUIDANCE)
+    assert ("For a limit finding, cite both the rule clause (for example 4.2 or 5.1) and the "
+            "clause that\n  holds the number.") in POLICY_GUIDANCE
 
 
 def test_agent_prompt_does_not_name_appendix_c():
@@ -300,4 +302,17 @@ def test_eval_by_agent_reports_tool_calls_step_limit_and_cost(data_dir, sandbox)
     assert "Tool calls per line, avg / max | 3.00 / 4" in text
     assert "Step-limit hits (limit 4 searches) | 1" in text and "Cost per line" in text
     assert "## Citation misses" in text and mm["citation_misses"] == []
+    assert mm["lines_citation_incomplete"] == 0
+    assert "citation incomplete (limit finding cites only appendices; decision kept) | 0" in text
     assert (sandbox / "reports" / "eval_agent.json").exists()
+
+
+def test_eval_counts_citation_incomplete_lines(data_dir, sandbox):
+    client = FakeClient(tool("Appendix B"),
+                        answer(finding("MEAL_OVER_LIMIT", ["Appendix B"],
+                                       "Tier 1 dinner, per person: $100", limit_amount="100")))
+    m, path = run_eval("agent", "main", cases=["X02"], data_dir=data_dir,
+                       reports_dir=sandbox / "reports", echo=lambda *_: None, client=client)
+    assert m["model"]["lines_citation_incomplete"] == 1
+    assert "citation incomplete (limit finding cites only appendices; decision kept) | 1" in (
+        path.read_text(encoding="utf-8"))

@@ -41,6 +41,11 @@ ACTION_ORDER = [REJECT, RECOVER, HOLD, REQUEST_RECEIPT, RECLASS]
 
 CLIENT_CLAUSE = "4.3"   # client entertainment limit (policy 4.3; names required by 4.4)
 
+# A limit finding should cite the rule clause (4.2, 5.1, ...) as well as the appendix that holds
+# the number. Citing only appendices adds this note; the decision itself is unchanged.
+LIMIT_CODES = ("MEAL_OVER_LIMIT", "LODGING_OVER_LIMIT")
+CITATION_INCOMPLETE = "citation incomplete"
+
 OK, NEEDS_HUMAN = "OK", "NEEDS_HUMAN"
 MANAGER, FINANCE, NO_APPROVER = "MANAGER", "FINANCE", "NONE"
 
@@ -76,6 +81,7 @@ class Decision:
     actions: list[str]
     status: str
     needs_human_reasons: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)   # review notes; never change the status
 
     def to_dict(self) -> dict:
         def money(v):
@@ -88,6 +94,7 @@ class Decision:
             "dollars_held": money(self.dollars_held),
             "approver": self.approver, "actions": self.actions, "status": self.status,
             "needs_human_reasons": self.needs_human_reasons,
+            "notes": self.notes,
         }
 
 
@@ -191,7 +198,12 @@ def decide(line: Line, findings: list[Finding], needs_human_reasons=(),
         dollars_by_code[code] = value
 
     codes = list(dollars_by_code)
-    held = _cents(sum((line.amount for c in codes if DIFFERENCE_TYPE[c] == TIMING), ZERO))
+    notes = []
+    for code in codes:
+        cites = by_code[code].cites
+        if code in LIMIT_CODES and cites and all(c.startswith("Appendix ") for c in cites):
+            notes.append(f"{CITATION_INCOMPLETE}: {code} cites only {', '.join(cites)}")
+    held =_cents(sum((line.amount for c in codes if DIFFERENCE_TYPE[c] == TIMING), ZERO))
 
     if reasons:
         status, out, approver, actions = NEEDS_HUMAN, None, None, []
@@ -214,4 +226,5 @@ def decide(line: Line, findings: list[Finding], needs_human_reasons=(),
         actions=actions,
         status=status,
         needs_human_reasons=reasons,
+        notes=notes,
     )

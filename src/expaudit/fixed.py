@@ -26,7 +26,7 @@ from expaudit.prompts import FIXED_SYSTEM_PROMPT
 from expaudit.schema import ModelAnswer, parse_answer
 from expaudit.search import search, tokenize
 
-PROMPT_VERSION = "fixed-v3"
+PROMPT_VERSION = "fixed-v4"
 SYSTEM_PROMPT = FIXED_SYSTEM_PROMPT
 
 

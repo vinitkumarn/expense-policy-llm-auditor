@@ -15,7 +15,7 @@ from pathlib import Path
 from expaudit import config
 from expaudit.baselines import BASELINES, audit
 from expaudit.db import DB_FILE, connect
-from expaudit.decide import ACTION_ORDER, Decision
+from expaudit.decide import ACTION_ORDER, CITATION_INCOMPLETE, Decision
 
 AUDITORS = ("naive", "rules", "fixed", "agent")
 MODEL_PATHS = ("fixed", "agent")
@@ -179,6 +179,8 @@ def model_metrics(results: list[LineResult]) -> dict:
         "citation_accuracy": cite_ok / cite_total if cite_total else None,
         "citations_checked": cite_total,
         "citation_misses": misses,
+        "lines_citation_incomplete": sum(
+            any(n.startswith(CITATION_INCOMPLETE) for n in r.decision.notes) for r in results),
     }
 
 
@@ -219,6 +221,8 @@ def _model_block(mm: dict) -> list[str]:
         f"| Step-limit hits (limit {config.AGENT_MAX_STEPS} searches) | {mm['step_limit_hits']} |",
         f"| Citation accuracy (expected ids within cited ids) | "
         f"{_pct(mm['citation_accuracy'])} of {mm['citations_checked']} findings |",
+        f"| Lines with citation incomplete (limit finding cites only appendices; decision kept) "
+        f"| {mm['lines_citation_incomplete']} |",
         "",
         "## Citation misses",
         "",

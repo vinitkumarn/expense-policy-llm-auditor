@@ -58,6 +58,8 @@ Answer with ONE JSON object and nothing else:
 
 Rules:
 - cited_clause_ids: ids of the clauses you relied on, exactly as shown in [brackets].
+- For a limit finding, cite both the rule clause (for example 4.2 or 5.1) and the clause that
+  holds the number.
 - policy_quote: copied exactly, character for character, from one of the cited clauses.
 - limit_amount: the per-person / per-night limit (or hour threshold) and it must appear in
   policy_quote. Use null if the policy clauses you have do not give it.
