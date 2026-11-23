@@ -208,3 +208,46 @@ def test_g01_decision_is_null_dollars_needs_human(con):
     assert d.status == "NEEDS_HUMAN"
     assert d.dollars_out_of_policy is None
     assert d.approver is None and d.actions == []
+
+
+# --- client meals: 4.3 limit, 4.4 names -------------------------------------------------------
+CLIENT_MEAL = lambda limit="150": Finding("MEAL_OVER_LIMIT", ("4.3",), limit_amount=D(limit))
+
+
+def test_g03_style_client_meal_on_dinner_limit_no_names_needs_human():
+    line = make_line(amount=D("450.00"), attendees_count=3, city="New York")
+    d = decide(line, [Finding("MEAL_OVER_LIMIT", ("4.2", "Appendix C"), limit_amount=D("85"))],
+               client_meal=True)
+    assert d.status == "NEEDS_HUMAN" and d.dollars_out_of_policy is None and d.approver is None
+    assert "client meal must use 4.3" in d.needs_human_reasons
+    assert "4.4 attendee names missing" in d.needs_human_reasons
+
+
+def test_client_meal_no_names_needs_human_even_with_no_finding():
+    d = decide(make_line(amount=D("450.00"), attendees_count=3), [], client_meal=True)
+    assert d.status == "NEEDS_HUMAN" and d.needs_human_reasons == ["4.4 attendee names missing"]
+
+
+def test_client_meal_citing_4_3_with_names_uses_the_4_3_limit():
+    line = make_line(amount=D("700.00"), attendees_count=4, city="London")
+    d = decide(line, [CLIENT_MEAL()], client_meal=True, attendee_names_quoted=True)
+    assert d.status == "OK" and d.dollars_out_of_policy == D("100.00")
+    assert d.cites == {"MEAL_OVER_LIMIT": ["4.3"]} and d.approver == "MANAGER"
+    assert d.actions == [REJECT]
+
+
+def test_client_meal_with_names_under_the_4_3_limit_is_clean():
+    d = decide(make_line(amount=D("560.00"), attendees_count=4), [CLIENT_MEAL()],
+               client_meal=True, attendee_names_quoted=True)
+    assert d.status == "OK" and d.codes == [] and d.dollars_out_of_policy == D("0.00")
+
+
+def test_client_meal_citing_4_3_but_no_names_needs_human():
+    d = decide(make_line(amount=D("700.00"), attendees_count=4), [CLIENT_MEAL()],
+               client_meal=True)
+    assert d.status == "NEEDS_HUMAN" and d.needs_human_reasons == ["4.4 attendee names missing"]
+
+
+def test_normal_dinner_unaffected_by_the_client_rule():
+    d = decide(make_line(amount=D("340.00"), attendees_count=3), [MEAL("85")])
+    assert d.status == "OK" and d.dollars_out_of_policy == D("85.00")

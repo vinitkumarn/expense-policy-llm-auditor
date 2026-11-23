@@ -35,6 +35,11 @@ class ModelAnswer(BaseModel):
 
     findings: list[ModelFinding]
     explanation: str
+    # Client meal (policy 4.3 / 4.4). Reported for the whole line, even with no findings.
+    # Python checks both quotes against the memo and decides (decide.py).
+    client_meal: bool | None = None
+    client_meal_quote: str | None = None
+    attendee_names_quote: str | None = None
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")

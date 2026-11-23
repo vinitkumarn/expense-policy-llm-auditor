@@ -29,7 +29,7 @@ from expaudit.prompts import AGENT_SYSTEM_PROMPT
 from expaudit.schema import ModelAnswer, parse_answer
 from expaudit.search import search
 
-PROMPT_VERSION = "agent-v2"
+PROMPT_VERSION = "agent-v3"
 SYSTEM_PROMPT = AGENT_SYSTEM_PROMPT
 TOOL_NAME = "search_policy"
 SEARCH_TOOL = {

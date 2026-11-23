@@ -26,7 +26,7 @@ from expaudit.prompts import FIXED_SYSTEM_PROMPT
 from expaudit.schema import ModelAnswer, parse_answer
 from expaudit.search import search, tokenize
 
-PROMPT_VERSION = "fixed-v2"
+PROMPT_VERSION = "fixed-v3"
 SYSTEM_PROMPT = FIXED_SYSTEM_PROMPT
 
 
@@ -177,6 +177,7 @@ def finish(line: Line, python_findings: list[Finding], answer: ModelAnswer | Non
     search queries, so a hit can replay them).
     """
     findings = list(python_findings)
+    client_meal = names_quoted = False
     if answer is not None:
         info.cited_ids = sorted({c for f in answer.findings for c in f.cited_clause_ids})
         info.guard_problems, shown, info.explanation_hidden = run_guards(
@@ -186,12 +187,15 @@ def finish(line: Line, python_findings: list[Finding], answer: ModelAnswer | Non
         else:
             info.explanation = shown.explanation
             findings += to_findings(answer)
+            client_meal = answer.client_meal is True
+            names_quoted = bool(answer.attendee_names_quote and answer.attendee_names_quote.strip())
             # The cache keeps the model's own answer; on a hit the guards run again.
             if use_cache and not info.cache_hit:
                 cache.put(key, {"answer": json.loads(answer.model_dump_json()),
                                 "queries": list(info.queries)}, cache_dir)
 
-    decision = decide(line, findings, reasons)
+    decision = decide(line, findings, reasons, client_meal=client_meal,
+                      attendee_names_quoted=names_quoted)
     info.cost_usd = cost_usd(model, info)
     info.latency_ms = int((time.perf_counter() - started) * 1000)
     audit.record({
